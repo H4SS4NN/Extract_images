@@ -1,0 +1,1664 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RectAI - Extraction Intelligente de Documents</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            900: '#1e3a8a'
+                        },
+                        success: '#10b981',
+                        warning: '#f59e0b',
+                        error: '#ef4444'
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-in-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'pulse-soft': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'bounce-soft': 'bounce 1s infinite'
+                    },
+                    backdropBlur: {
+                        xs: '2px'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .glass-morphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .gradient-border {
+            background: linear-gradient(white, white) padding-box,
+                        linear-gradient(135deg, #3b82f6, #8b5cf6) border-box;
+            border: 2px solid transparent;
+        }
+    </style>
+</head>
+<body class="h-full bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 font-sans">
+    <!-- Header moderne -->
+    <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                        <i class="fas fa-crop-alt text-white text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900">RectAI</h1>
+                        <p class="text-xs text-gray-500">Extraction Intelligente</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="statusIndicator" class="flex items-center space-x-2">
+                        <div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                        <span class="text-sm text-gray-600">Connexion...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Section d'upload moderne -->
+        <div class="mb-8">
+            <div class="text-center mb-6">
+                <h2 class="text-3xl font-bold text-gray-900 mb-2">
+                    Détection et Extraction de Rectangles
+                </h2>
+                <p class="text-lg text-gray-600 max-w-2xl mx-auto">
+                    Intelligence artificielle avancée pour détecter et extraire automatiquement 
+                    les formes rectangulaires avec correction de perspective
+                </p>
+            </div>
+
+            <!-- Zone d'upload premium -->
+            <div id="uploadArea" class="relative group cursor-pointer transition-all duration-300 hover:scale-[1.02]">
+                <div class="border-2 border-dashed border-gray-300 group-hover:border-blue-400 rounded-3xl p-12 bg-white/60 backdrop-blur-sm transition-all duration-300">
+                    <div class="text-center">
+                        <div class="mx-auto w-24 h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                            <i class="fas fa-cloud-upload-alt text-white text-3xl"></i>
+                        </div>
+                        <h3 class="text-2xl font-semibold text-gray-900 mb-2">
+                            Glissez vos fichiers ici
+                        </h3>
+                        <p class="text-gray-600 mb-4">
+                            ou cliquez pour parcourir vos fichiers
+                        </p>
+                        <div class="flex flex-wrap justify-center gap-4 text-sm text-gray-500">
+                            <span class="flex items-center">
+                                <i class="fas fa-image mr-2 text-blue-500"></i>
+                                Images: JPG, PNG, TIFF, BMP
+                            </span>
+                            <span class="flex items-center">
+                                <i class="fas fa-file-pdf mr-2 text-red-500"></i>
+                                Documents: PDF multi-pages
+                            </span>
+                        </div>
+                    </div>
+                    <input type="file" id="fileInput" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*,.tif,.tiff,.pdf">
+                </div>
+                <!-- Overlay pour drag & drop -->
+                <div id="dragOverlay" class="absolute inset-0 bg-blue-500/20 backdrop-blur-sm rounded-3xl flex items-center justify-center opacity-0 transition-opacity duration-300 pointer-events-none">
+                    <div class="text-center">
+                        <i class="fas fa-download text-4xl text-blue-600 mb-4 animate-bounce-soft"></i>
+                        <p class="text-xl font-semibold text-blue-800">Déposez vos fichiers ici</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contrôles modernes -->
+        <div id="controls" class="hidden mb-8 animate-fade-in">
+            <div class="bg-white/80 backdrop-blur-md rounded-2xl border border-gray-200 p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+                    <i class="fas fa-sliders-h mr-3 text-blue-500"></i>
+                    Paramètres de détection
+                </h3>
+                
+                <div class="grid md:grid-cols-2 gap-6">
+                    <!-- Mode de détection -->
+                    <div class="space-y-3">
+                        <label class="block text-sm font-medium text-gray-700">Mode de détection</label>
+                        <select id="detectionMode" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white">
+                            <option value="general">🔍 Général (recommandé)</option>
+                            <option value="documents">📄 Documents multiples (blanc/blanc)</option>
+                            <option value="high_contrast">🎯 Objets contrastés</option>
+                        </select>
+                    </div>
+
+                    <!-- Sensibilité -->
+                    <div class="space-y-3">
+                        <label class="block text-sm font-medium text-gray-700 flex items-center justify-between">
+                            Sensibilité de détection
+                            <span id="sensitivityValue" class="text-lg font-bold text-blue-600">50</span>
+                        </label>
+                        <input type="range" id="sensitivitySlider" min="10" max="100" value="50" 
+                               class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider">
+                    </div>
+                </div>
+
+                <!-- Description du mode -->
+                <div id="modeDescription" class="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                    <div class="flex items-start space-x-3">
+                        <i class="fas fa-info-circle text-blue-500 mt-0.5"></i>
+                        <div>
+                            <p class="text-sm text-blue-800"><strong>Mode Général :</strong> Équilibre optimal pour la plupart des cas d'usage</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bouton d'analyse -->
+                <div class="mt-6 text-center">
+                    <button id="processBtn" class="inline-flex items-center px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-2xl hover:from-blue-600 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-xl">
+                        <i class="fas fa-magic mr-3"></i>
+                        Analyser et détecter
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analyse OCR (nouveau) -->
+        <div id="ocrAnalysis" class="hidden mb-8 animate-fade-in">
+            <div class="bg-white/80 backdrop-blur-md rounded-2xl border border-gray-200 p-6">
+                <div id="ocrResults" class="space-y-4">
+                    <!-- Contenu dynamique OCR -->
+                </div>
+                <div class="mt-6 flex flex-col sm:flex-row gap-4 justify-center">
+                    <button id="continueWithOCR" class="hidden inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-200">
+                        <i class="fas fa-text-width mr-3"></i>
+                        Utiliser l'OCR existant
+                    </button>
+                    <button id="continueWithIA" class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-200">
+                        <i class="fas fa-magic mr-3"></i>
+                        Continuer avec l'IA
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Indicateur de traitement avec progression -->
+        <div id="processing" class="hidden">
+            <div class="bg-white/80 backdrop-blur-md rounded-2xl border border-gray-200 p-8">
+                <!-- Header de progression -->
+                <div class="text-center mb-6">
+                    <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mb-4 animate-pulse-soft">
+                        <i class="fas fa-cog text-white text-2xl animate-spin"></i>
+                    </div>
+                    <h3 id="processingText" class="text-xl font-semibold text-gray-900 mb-2">
+                        Analyse en cours...
+                    </h3>
+                    <p id="processingSubtext" class="text-gray-600">Intelligence artificielle en action</p>
+                </div>
+
+                <!-- Barre de progression détaillée -->
+                <div id="progressDetails" class="space-y-4">
+                    <!-- Barre de progression principale -->
+                    <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div id="progressBar" class="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    
+                    <!-- Statistiques de progression -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div class="bg-blue-50 rounded-lg p-3">
+                            <div id="currentPage" class="text-lg font-bold text-blue-600">0</div>
+                            <div class="text-sm text-blue-700">Page actuelle</div>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-3">
+                            <div id="totalPages" class="text-lg font-bold text-green-600">-</div>
+                            <div class="text-sm text-green-700">Total pages</div>
+                        </div>
+                        <div class="bg-yellow-50 rounded-lg p-3">
+                            <div id="elapsedTime" class="text-lg font-bold text-yellow-600">0s</div>
+                            <div class="text-sm text-yellow-700">Temps écoulé</div>
+                        </div>
+                        <div class="bg-purple-50 rounded-lg p-3">
+                            <div id="remainingTime" class="text-lg font-bold text-purple-600">-</div>
+                            <div class="text-sm text-purple-700">Temps restant</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informations détaillées -->
+                    <div class="text-center text-sm text-gray-600">
+                        <div id="speedInfo" class="mb-2">Vitesse: - pages/sec</div>
+                        <div id="currentOperation" class="font-medium">Préparation...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Résultats -->
+        <div id="results" class="hidden animate-fade-in">
+            <!-- Informations sur les résultats -->
+            <div id="resultInfo" class="mb-8">
+                <!-- Contenu dynamique -->
+            </div>
+
+            <!-- Grille des rectangles -->
+            <div id="rectangleGrid" class="space-y-8">
+                <!-- Contenu dynamique -->
+            </div>
+
+            <!-- Actions globales -->
+            <div class="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+                <button id="downloadAllBtn" class="inline-flex items-center justify-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-700 transform hover:scale-105 transition-all duration-200 shadow-lg">
+                    <i class="fas fa-download mr-3"></i>
+                    Télécharger tout
+                </button>
+                <button id="resetBtn" class="inline-flex items-center justify-center px-6 py-3 bg-gray-600 text-white font-semibold rounded-xl hover:bg-gray-700 transform hover:scale-105 transition-all duration-200 shadow-lg">
+                    <i class="fas fa-redo mr-3"></i>
+                    Nouvelle analyse
+                </button>
+            </div>
+        </div>
+
+        <!-- Toast notifications -->
+        <div id="toastContainer" class="fixed bottom-6 right-6 z-50 space-y-2">
+            <!-- Toast dynamiques -->
+        </div>
+    </main>
+
+    <!-- CSS Custom pour le slider -->
+    <style>
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            height: 20px;
+            width: 20px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .slider::-moz-range-thumb {
+            height: 20px;
+            width: 20px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        
+        class ModernRectangleClient {
+            constructor() {
+                this.currentImage = null;
+                this.detectedRectangles = [];
+                this.currentPDF = null;
+                this.pdfPages = [];
+                this.socket = null;
+                this.processingComplete = false;
+                this.initEventListeners();
+                this.initWebSocket();
+                this.checkServerStatus();
+                this.initAnimations();
+            }
+
+            // === INITIALISATION ===
+            initEventListeners() {
+                const uploadArea = document.getElementById('uploadArea');
+                const fileInput = document.getElementById('fileInput');
+                
+                uploadArea.addEventListener('click', () => fileInput.click());
+                uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
+                uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
+                uploadArea.addEventListener('drop', this.handleDrop.bind(this));
+                fileInput.addEventListener('change', this.handleFileSelect.bind(this));
+                
+                document.getElementById('sensitivitySlider').addEventListener('input', this.updateSensitivity.bind(this));
+                document.getElementById('detectionMode').addEventListener('change', this.updateMode.bind(this));
+                document.getElementById('processBtn').addEventListener('click', this.processImage.bind(this));
+                document.getElementById('downloadAllBtn').addEventListener('click', this.downloadAll.bind(this));
+                document.getElementById('resetBtn').addEventListener('click', this.reset.bind(this));
+                
+                // Nouveaux événements OCR
+                document.getElementById('continueWithOCR').addEventListener('click', this.continueWithOCR.bind(this));
+                document.getElementById('continueWithIA').addEventListener('click', this.continueWithIA.bind(this));
+            }
+
+            // === WEBSOCKETS ===
+            initWebSocket() {
+                try {
+                    this.socket = io('http://localhost:5000');
+                    
+                    this.socket.on('connect', () => {
+                        console.log('🔗 WebSocket connecté');
+                        this.updateStatusIndicator('connected', 'WebSocket connecté');
+                        this.showToast('success', 'WebSocket connecté', 'Progression temps réel disponible');
+                    });
+
+                    this.socket.on('disconnect', () => {
+                        console.log('❌ WebSocket déconnecté');
+                        this.updateStatusIndicator('error', 'WebSocket déconnecté');
+                    });
+
+                    this.socket.on('progress_update', (data) => {
+                        console.log('🔄 Événement progress_update reçu:', data);
+                        this.updateProgress(data);
+                    });
+
+                    this.socket.on('page_processing', (data) => {
+                        console.log('📄 Événement page_processing reçu:', data);
+                        this.updateCurrentPage(data);
+                    });
+
+                    this.socket.on('ocr_analysis', (data) => {
+                        this.showOCRAnalysis(data);
+                    });
+
+                    this.socket.on('processing_complete', (data) => {
+                        this.onProcessingComplete(data);
+                    });
+
+                    this.socket.on('processing_error', (data) => {
+                        this.onProcessingError(data);
+                    });
+
+                    this.socket.on('results_ready', (data) => {
+                        this.onResultsReady(data);
+                    });
+
+                    this.socket.on('conversion_warning', (data) => {
+                        this.showConversionWarning(data);
+                    });
+
+                    this.socket.on('progressive_start', (data) => {
+                        this.showProgressiveStart(data);
+                    });
+
+                    this.socket.on('page_results', (data) => {
+                        this.showPageResults(data);
+                    });
+
+                } catch (error) {
+                    console.error('⚠️ WebSocket non disponible:', error);
+                    this.socket = null;
+                    this.showToast('warning', 'WebSocket indisponible', 'Mode dégradé sans progression temps réel');
+                }
+            }
+
+            initAnimations() {
+                // Animations d'entrée pour les éléments
+                document.querySelectorAll('[class*="animate-"]').forEach(el => {
+                    el.style.animationDelay = `${Math.random() * 0.5}s`;
+                });
+            }
+
+            // === GESTION DU SERVEUR ===
+            async checkServerStatus() {
+                try {
+                    const response = await fetch(`${API_BASE}/health`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.updateStatusIndicator('connected', data.message);
+                        this.showToast('success', 'Serveur connecté', 'RectAI est prêt à analyser vos documents');
+                    } else {
+                        throw new Error('Serveur non disponible');
+                    }
+                } catch (error) {
+                    this.updateStatusIndicator('error', 'Serveur non disponible');
+                    this.showToast('error', 'Erreur de connexion', 'Veuillez lancer le serveur backend');
+                }
+            }
+
+            updateStatusIndicator(status, message) {
+                const indicator = document.getElementById('statusIndicator');
+                const dot = indicator.querySelector('div');
+                const text = indicator.querySelector('span');
+                
+                dot.className = 'w-2 h-2 rounded-full';
+                
+                switch(status) {
+                    case 'connected':
+                        dot.classList.add('bg-green-500');
+                        text.textContent = 'Connecté';
+                        text.className = 'text-sm text-green-600';
+                        break;
+                    case 'processing':
+                        dot.classList.add('bg-yellow-500', 'animate-pulse');
+                        text.textContent = 'Traitement...';
+                        text.className = 'text-sm text-yellow-600';
+                        break;
+                    case 'error':
+                        dot.classList.add('bg-red-500');
+                        text.textContent = 'Erreur';
+                        text.className = 'text-sm text-red-600';
+                        break;
+                    default:
+                        dot.classList.add('bg-gray-400', 'animate-pulse');
+                        text.textContent = message || 'Connexion...';
+                        text.className = 'text-sm text-gray-600';
+                }
+            }
+
+            // === SYSTÈME DE TOASTS ===
+            showToast(type, title, message, duration = 5000) {
+                const container = document.getElementById('toastContainer');
+                const toast = document.createElement('div');
+                
+                const colors = {
+                    success: 'from-green-500 to-emerald-600',
+                    error: 'from-red-500 to-rose-600',
+                    warning: 'from-yellow-500 to-orange-600',
+                    info: 'from-blue-500 to-indigo-600'
+                };
+
+                const icons = {
+                    success: 'fas fa-check-circle',
+                    error: 'fas fa-exclamation-circle',
+                    warning: 'fas fa-exclamation-triangle',
+                    info: 'fas fa-info-circle'
+                };
+
+                toast.className = 'transform translate-x-full transition-transform duration-300 ease-out';
+                toast.innerHTML = `
+                    <div class="bg-white rounded-xl shadow-lg border border-gray-200 p-4 min-w-80 max-w-md">
+                        <div class="flex items-start space-x-3">
+                            <div class="flex-shrink-0">
+                                <div class="w-8 h-8 rounded-full bg-gradient-to-r ${colors[type]} flex items-center justify-center">
+                                    <i class="${icons[type]} text-white text-sm"></i>
+                                </div>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-900">${title}</p>
+                                <p class="text-sm text-gray-600">${message}</p>
+                            </div>
+                            <button onclick="this.parentElement.parentElement.parentElement.remove()" class="flex-shrink-0 text-gray-400 hover:text-gray-600">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(toast);
+                
+                // Animation d'entrée
+                setTimeout(() => {
+                    toast.classList.remove('translate-x-full');
+                }, 10);
+
+                // Auto-suppression
+                if (duration > 0) {
+                    setTimeout(() => {
+                        toast.classList.add('translate-x-full');
+                        setTimeout(() => toast.remove(), 300);
+                    }, duration);
+                }
+            }
+
+            // === DRAG & DROP ===
+            handleDragOver(e) {
+                e.preventDefault();
+                document.getElementById('dragOverlay').style.opacity = '1';
+            }
+
+            handleDragLeave(e) {
+                e.preventDefault();
+                document.getElementById('dragOverlay').style.opacity = '0';
+            }
+
+            handleDrop(e) {
+                e.preventDefault();
+                document.getElementById('dragOverlay').style.opacity = '0';
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    this.loadImage(files[0]);
+                }
+            }
+
+            handleFileSelect(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    this.loadImage(file);
+                }
+            }
+
+            // === GESTION DES FICHIERS ===
+            loadImage(file) {
+                this.currentImage = file;
+                this.currentPDF = null;
+                this.pdfPages = [];
+                this.showControls();
+                
+                const fileType = file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'Image';
+                const size = (file.size/1024/1024).toFixed(2);
+                
+                this.showToast('info', `${fileType} chargé`, `${file.name} (${size} MB)`);
+            }
+
+            showControls() {
+                const controls = document.getElementById('controls');
+                controls.classList.remove('hidden');
+                controls.style.opacity = '0';
+                setTimeout(() => {
+                    controls.style.opacity = '1';
+                }, 10);
+            }
+
+            // === PARAMÈTRES ===
+            updateSensitivity(e) {
+                document.getElementById('sensitivityValue').textContent = e.target.value;
+            }
+
+            updateMode() {
+                const mode = document.getElementById('detectionMode').value;
+                const sensitivitySlider = document.getElementById('sensitivitySlider');
+                const sensitivityValue = document.getElementById('sensitivityValue');
+                const description = document.getElementById('modeDescription');
+                
+                const modes = {
+                    documents: {
+                        sensitivity: 80,
+                        title: 'Mode Documents multiples',
+                        desc: 'Optimisé pour détecter plusieurs documents sur fond blanc (scans, photos de documents)',
+                        icon: 'fas fa-file-alt',
+                        color: 'blue'
+                    },
+                    high_contrast: {
+                        sensitivity: 30,
+                        title: 'Mode Objets contrastés',
+                        desc: 'Pour des objets avec des bords nets et bien définis',
+                        icon: 'fas fa-adjust',
+                        color: 'purple'
+                    },
+                    general: {
+                        sensitivity: 50,
+                        title: 'Mode Général',
+                        desc: 'Équilibre optimal pour la plupart des cas d\'usage',
+                        icon: 'fas fa-balance-scale',
+                        color: 'green'
+                    }
+                };
+
+                const config = modes[mode] || modes.general;
+                
+                sensitivitySlider.value = config.sensitivity;
+                sensitivityValue.textContent = config.sensitivity;
+                
+                description.innerHTML = `
+                    <div class="flex items-start space-x-3">
+                        <i class="${config.icon} text-${config.color}-500 mt-0.5"></i>
+                        <div>
+                            <p class="text-sm text-${config.color}-800">
+                                <strong>${config.title} :</strong> ${config.desc}
+                            </p>
+                        </div>
+                    </div>
+                `;
+                description.className = `mt-4 p-4 bg-${config.color}-50 rounded-xl border border-${config.color}-200`;
+            }
+
+            // === GESTION OCR ===
+            showOCRAnalysis(ocrInfo) {
+                console.log('📄 Analyse OCR reçue:', ocrInfo);
+                
+                const ocrAnalysis = document.getElementById('ocrAnalysis');
+                const ocrResults = document.getElementById('ocrResults');
+                const continueWithOCR = document.getElementById('continueWithOCR');
+                
+                // Déterminer l'icône et la couleur selon les résultats
+                let iconClass, bgClass, titleColor, recommendation;
+                
+                if (ocrInfo.has_ocr) {
+                    if (ocrInfo.text_ratio > 0.8) {
+                        iconClass = 'fas fa-check-circle';
+                        bgClass = 'from-green-50 to-emerald-50 border-green-200';
+                        titleColor = 'text-green-900';
+                        continueWithOCR.classList.remove('hidden');
+                    } else if (ocrInfo.text_ratio > 0.5) {
+                        iconClass = 'fas fa-exclamation-triangle';
+                        bgClass = 'from-yellow-50 to-orange-50 border-yellow-200';
+                        titleColor = 'text-yellow-900';
+                        continueWithOCR.classList.remove('hidden');
+                    } else {
+                        iconClass = 'fas fa-info-circle';
+                        bgClass = 'from-blue-50 to-indigo-50 border-blue-200';
+                        titleColor = 'text-blue-900';
+                    }
+                } else {
+                    iconClass = 'fas fa-search';
+                    bgClass = 'from-gray-50 to-slate-50 border-gray-200';
+                    titleColor = 'text-gray-900';
+                }
+                
+                ocrResults.innerHTML = `
+                    <div class="bg-gradient-to-r ${bgClass} rounded-2xl border p-6">
+                        <div class="flex items-center space-x-3 mb-4">
+                            <div class="w-12 h-12 bg-gradient-to-r from-purple-500 to-indigo-600 rounded-full flex items-center justify-center">
+                                <i class="${iconClass} text-white text-xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-xl font-bold ${titleColor}">Analyse OCR terminée</h3>
+                                <p class="text-sm text-gray-600">${ocrInfo.total_pages} pages analysées</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <div class="bg-white/60 rounded-xl p-4 text-center">
+                                <div class="text-2xl font-bold ${titleColor}">${ocrInfo.text_pages}</div>
+                                <div class="text-sm text-gray-700">Pages avec texte</div>
+                            </div>
+                            <div class="bg-white/60 rounded-xl p-4 text-center">
+                                <div class="text-2xl font-bold ${titleColor}">${(ocrInfo.text_ratio * 100).toFixed(1)}%</div>
+                                <div class="text-sm text-gray-700">Ratio de texte</div>
+                            </div>
+                            <div class="bg-white/60 rounded-xl p-4 text-center">
+                                <div class="text-2xl font-bold ${titleColor}">${(ocrInfo.confidence * 100).toFixed(0)}%</div>
+                                <div class="text-sm text-gray-700">Confiance</div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white/80 rounded-xl p-4">
+                            <div class="flex items-start space-x-3">
+                                <i class="fas fa-lightbulb text-yellow-500 mt-0.5"></i>
+                                <div>
+                                    <p class="text-sm font-medium text-gray-900">Recommandation:</p>
+                                    <p class="text-sm text-gray-700">${ocrInfo.recommendation}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                ocrAnalysis.classList.remove('hidden');
+                this.hideProcessing();
+            }
+            
+            async continueWithOCR() {
+                this.showToast('info', 'Extraction OCR', 'Extraction directe du texte en cours...');
+                document.getElementById('ocrAnalysis').classList.add('hidden');
+                this.showProcessing();
+                
+                try {
+                    document.getElementById('processingText').textContent = 'Extraction OCR directe...';
+                    document.getElementById('processingSubtext').textContent = 'Récupération du texte existant';
+                    
+                    const response = await fetch(`${API_BASE}/extract_ocr/${this.currentImage.name}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Erreur extraction OCR');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Adapter le résultat pour l'affichage
+                    const displayResult = {
+                        success: true,
+                        message: 'Extraction OCR directe terminée',
+                        total_pages: result.total_pages,
+                        total_rectangles: 0,
+                        filename: result.filename,
+                        is_pdf: true,
+                        ocr_extraction: true,
+                        ocr_text: result.extracted_text,
+                        full_text: result.full_text
+                    };
+                    
+                    this.displayOCRResults(displayResult);
+                    this.updateStatusIndicator('connected', 'Extraction OCR terminée');
+                    
+                } catch (error) {
+                    console.error('Erreur extraction OCR:', error);
+                    this.hideProcessing();
+                    this.showToast('error', 'Erreur OCR', error.message);
+                    this.showToast('info', 'Alternative', 'Redirection vers traitement IA...');
+                    setTimeout(() => this.continueWithIA(), 2000);
+                }
+            }
+            
+            displayOCRResults(result) {
+                const infoDiv = document.getElementById('resultInfo');
+                const grid = document.getElementById('rectangleGrid');
+                
+                this.hideProcessing();
+                this.showResults();
+                
+                infoDiv.innerHTML = `
+                    <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border border-green-200 p-6">
+                        <div class="flex items-center space-x-3 mb-4">
+                            <div class="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
+                                <i class="fas fa-text-width text-white text-xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-xl font-bold text-green-900">Extraction OCR directe terminée !</h3>
+                                <p class="text-green-700">Texte extrait depuis l'OCR existant</p>
+                            </div>
+                        </div>
+                        <div class="bg-green-100/50 rounded-xl p-4">
+                            <p class="text-sm text-green-800 mb-2">
+                                <i class="fas fa-info-circle mr-2"></i>
+                                <strong>Texte extrait :</strong>
+                            </p>
+                            <div class="bg-white rounded p-3 text-sm text-gray-700 max-h-48 overflow-y-auto">
+                                ${result.ocr_text}
+                            </div>
+                            <div class="mt-3 text-center">
+                                <button onclick="navigator.clipboard.writeText('${result.ocr_text}')" 
+                                        class="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+                                    <i class="fas fa-copy mr-2"></i>
+                                    Copier le texte
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                grid.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="fas fa-check text-white text-2xl"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-900 mb-2">Extraction OCR directe</h3>
+                        <p class="text-gray-600 mb-4">Le texte a été extrait depuis l'OCR existant dans le PDF</p>
+                        
+                        <!-- Nouvelles options pour les images -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto mt-6">
+                            <div class="bg-blue-50 rounded-xl p-6 border border-blue-200">
+                                <div class="flex items-center justify-center w-12 h-12 bg-blue-500 rounded-full mx-auto mb-4">
+                                    <i class="fas fa-images text-white"></i>
+                                </div>
+                                <h4 class="text-lg font-bold text-blue-900 mb-2">Extraction rapide des images</h4>
+                                <p class="text-sm text-blue-700 mb-4">Images déjà dans le PDF extraites directement (30 secondes)</p>
+                                <button onclick="window.rectangleClient.extractDirectImages()" 
+                                        class="w-full inline-flex items-center justify-center px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-download mr-2"></i>
+                                    Extraire images PDF
+                                </button>
+                            </div>
+                            
+                            <div class="bg-purple-50 rounded-xl p-6 border border-purple-200">
+                                <div class="flex items-center justify-center w-12 h-12 bg-purple-500 rounded-full mx-auto mb-4">
+                                    <i class="fas fa-magic text-white"></i>
+                                </div>
+                                <h4 class="text-lg font-bold text-purple-900 mb-2">Détection IA avancée</h4>
+                                <p class="text-sm text-purple-700 mb-4">Œuvres individuelles avec correction perspective (17 min)</p>
+                                <button onclick="window.rectangleClient.continueWithIA()" 
+                                        class="w-full inline-flex items-center justify-center px-4 py-3 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors">
+                                    <i class="fas fa-robot mr-2"></i>
+                                    Traitement IA complet
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-green-50 rounded-xl p-4 max-w-md mx-auto mt-4">
+                            <p class="text-sm text-green-800">
+                                <i class="fas fa-lightbulb mr-2"></i>
+                                <strong>Conseil :</strong> Commencez par l'extraction rapide pour voir le contenu !
+                            </p>
+                        </div>
+                    </div>
+                `;
+                
+                this.showToast('success', 'OCR extrait !', 'Texte récupéré depuis l\'OCR existant');
+            }
+            
+            async continueWithIA() {
+                document.getElementById('ocrAnalysis').classList.add('hidden');
+                this.showProcessing();
+                
+                try {
+                    document.getElementById('processingText').textContent = 'Démarrage traitement IA...';
+                    document.getElementById('processingSubtext').textContent = 'Traitement progressif avec qualité maximale';
+                    
+                    const sensitivity = document.getElementById('sensitivitySlider').value;
+                    const mode = document.getElementById('detectionMode').value;
+                    
+                    const response = await fetch(`${API_BASE}/continue_with_ai/${this.currentImage.name}?sensitivity=${sensitivity}&mode=${mode}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Erreur démarrage traitement IA');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.processing_started) {
+                        this.showToast('success', 'Traitement IA démarré', 'Progression temps réel activée');
+                        document.getElementById('processingText').textContent = 'Traitement IA progressif...';
+                        document.getElementById('processingSubtext').textContent = '🚀 Qualité maximale - Résultats page par page';
+                    } else {
+                        throw new Error('Impossible de démarrer le traitement');
+                    }
+                    
+                } catch (error) {
+                    console.error('Erreur démarrage IA:', error);
+                    this.hideProcessing();
+                    this.showToast('error', 'Erreur', error.message);
+                }
+            }
+
+            // === PROGRESSION EN TEMPS RÉEL ===
+            updateProgress(data) {
+                console.log('📊 Mise à jour progression:', data);
+                
+                // Vérifier que les éléments existent
+                const progressBar = document.getElementById('progressBar');
+                const currentPage = document.getElementById('currentPage');
+                const totalPages = document.getElementById('totalPages');
+                const elapsedTime = document.getElementById('elapsedTime');
+                const remainingTime = document.getElementById('remainingTime');
+                const speedInfo = document.getElementById('speedInfo');
+                const currentOperation = document.getElementById('currentOperation');
+                
+                if (!progressBar) {
+                    console.error('❌ Éléments de progression non trouvés');
+                    return;
+                }
+                
+                // Mettre à jour la barre de progression
+                progressBar.style.width = `${data.progress_percent || 0}%`;
+                
+                // Mettre à jour les statistiques avec des valeurs par défaut
+                if (currentPage) currentPage.textContent = data.current || 0;
+                if (totalPages) totalPages.textContent = data.total || '-';
+                if (elapsedTime) elapsedTime.textContent = data.elapsed_formatted || '0s';
+                if (remainingTime) remainingTime.textContent = data.eta_formatted || '-';
+                if (speedInfo) speedInfo.textContent = `Vitesse: ${data.items_per_second || 0} pages/sec`;
+                if (currentOperation) currentOperation.textContent = data.current_item_name || data.operation || 'Traitement...';
+            }
+            
+            updateCurrentPage(data) {
+                console.log('📄 Page courante:', data);
+                document.getElementById('processingText').textContent = `Traitement page ${data.current_page}/${data.total_pages}`;
+                document.getElementById('processingSubtext').textContent = data.page_name;
+            }
+            
+            onProcessingComplete(data) {
+                console.log('🎉 Traitement terminé:', data);
+                this.processingComplete = true;
+                
+                // Récupérer les résultats finaux
+                this.fetchFinalResults();
+                
+                this.showToast('success', 'Traitement terminé!', 
+                              `${data.total_rectangles} rectangles sur ${data.total_pages} pages`);
+            }
+            
+            onProcessingError(data) {
+                console.error('💥 Erreur de traitement:', data);
+                this.hideProcessing();
+                this.showToast('error', 'Erreur de traitement', data.error);
+                this.updateStatusIndicator('error', 'Erreur de traitement');
+            }
+            
+            onResultsReady(data) {
+                console.log('📋 Résultats prêts:', data);
+                
+                if (data.success) {
+                    this.displayResults(data.data);
+                    this.updateStatusIndicator('connected', 'Traitement terminé');
+                } else {
+                    this.hideProcessing();
+                    this.showToast('error', 'Erreur de traitement', data.error);
+                    this.updateStatusIndicator('error', 'Erreur de traitement');
+                }
+            }
+            
+            showConversionWarning(data) {
+                console.log('⚠️ Avertissement conversion:', data);
+                
+                // Afficher un toast d'avertissement détaillé
+                this.showToast('warning', 
+                    `PDF volumineux détecté (${data.total_pages} pages)`, 
+                    `Conversion en cours - Temps estimé: ${Math.floor(data.estimated_time/60)}m ${data.estimated_time%60}s`, 
+                    10000 // 10 secondes
+                );
+                
+                // Mettre à jour l'interface de progression
+                document.getElementById('processingText').textContent = `Conversion ${data.total_pages} pages en cours...`;
+                document.getElementById('processingSubtext').textContent = `⏱️ Temps estimé: ${Math.floor(data.estimated_time/60)}m ${data.estimated_time%60}s - Soyez patient !`;
+                
+                // Afficher des détails supplémentaires
+                const currentOperation = document.getElementById('currentOperation');
+                if (currentOperation) {
+                    currentOperation.innerHTML = `
+                        <div class="text-center">
+                            <div class="text-sm font-medium text-yellow-800 mb-2">
+                                🔄 Conversion PDF → Images haute résolution
+                            </div>
+                            <div class="text-xs text-gray-600">
+                                📄 ${data.total_pages} pages × 300 DPI = Images très lourdes<br/>
+                                💾 ~${Math.round(data.total_pages * 15 / 1024)} GB en mémoire
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            
+            showProgressiveStart(data) {
+                console.log('🚀 Traitement progressif démarré:', data);
+                
+                this.showToast('success', 
+                    `Traitement progressif activé !`, 
+                    `Premiers résultats dans 30-60s - Qualité: ${data.quality}`, 
+                    8000
+                );
+                
+                document.getElementById('processingText').textContent = 'Traitement progressif en cours...';
+                document.getElementById('processingSubtext').textContent = '🚀 Résultats page par page - Qualité ULTRA HAUTE';
+                
+                // Préparer la zone d'affichage progressif
+                const grid = document.getElementById('rectangleGrid');
+                grid.innerHTML = `
+                    <div id="progressiveResults" class="space-y-6">
+                        <h3 class="text-2xl font-bold text-gray-900 flex items-center">
+                            <i class="fas fa-rocket mr-3 text-blue-500"></i>
+                            Résultats progressifs
+                        </h3>
+                        <div id="progressivePages" class="space-y-4">
+                            <!-- Les pages apparaîtront ici au fur et à mesure -->
+                        </div>
+                    </div>
+                `;
+                
+                this.hideProcessing();
+                this.showResults();
+            }
+            
+            showPageResults(data) {
+                console.log('📄 Résultats page reçus:', data);
+                
+                // Afficher immédiatement cette page dans les résultats
+                const progressivePages = document.getElementById('progressivePages');
+                
+                if (progressivePages) {
+                    const pageSection = this.createProgressivePageSection(data);
+                    progressivePages.appendChild(pageSection);
+                    
+                    // Scroll vers les nouveaux résultats
+                    pageSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+                
+                // Toast pour chaque page
+                this.showToast('success', 
+                    `Page ${data.page_number} terminée !`, 
+                    `${data.rectangles_count} rectangles trouvés en ${data.processing_time.toFixed(1)}s`, 
+                    3000
+                );
+            }
+            
+            createProgressivePageSection(pageData) {
+                const section = document.createElement('div');
+                section.className = 'bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200 p-6 mb-4 animate-fade-in';
+                
+                const header = document.createElement('div');
+                header.className = 'flex items-center justify-between pb-4 mb-4 border-b border-gray-200';
+                header.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-check text-white"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-lg font-bold text-gray-900">Page ${pageData.page_number}</h4>
+                            <p class="text-sm text-gray-600">${pageData.rectangles_count} rectangles - ${pageData.processing_time.toFixed(1)}s</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2 px-3 py-1 bg-green-100 rounded-full">
+                        <i class="fas fa-shapes text-green-600 text-sm"></i>
+                        <span class="text-sm font-medium text-green-700">${pageData.rectangles_count}</span>
+                    </div>
+                `;
+                section.appendChild(header);
+                
+                if (pageData.rectangles_count === 0) {
+                    const noRects = document.createElement('div');
+                    noRects.className = 'text-center py-4 text-gray-500';
+                    noRects.innerHTML = `
+                        <i class="fas fa-search text-2xl mb-2 opacity-50"></i>
+                        <p>Aucun rectangle détecté sur cette page</p>
+                    `;
+                    section.appendChild(noRects);
+                    return section;
+                }
+                
+                const pageGrid = document.createElement('div');
+                pageGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+                
+                pageData.rectangles.forEach((rect, index) => {
+                    const card = this.createModernRectangleCard(rect, index, true, pageData.page_number);
+                    pageGrid.appendChild(card);
+                });
+                
+                section.appendChild(pageGrid);
+                return section;
+            }
+            
+            async extractDirectImages() {
+                try {
+                    this.showToast('info', 'Extraction images...', 'Extraction directe des images du PDF en cours');
+                    
+                    const response = await fetch(`${API_BASE}/extract_images/${this.currentImage.name}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Erreur extraction images');
+                    }
+                    
+                    // Télécharger le ZIP d'images
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = `${this.currentImage.name.replace('.pdf', '')}_images_extraites.zip`;
+                    link.click();
+                    
+                    window.URL.revokeObjectURL(downloadUrl);
+                    
+                    this.showToast('success', 'Images extraites !', 'ZIP téléchargé avec toutes les images du PDF');
+                    
+                } catch (error) {
+                    console.error('Erreur extraction images:', error);
+                    this.showToast('error', 'Erreur extraction', error.message);
+                }
+            }
+            
+            async fetchFinalResults() {
+                try {
+                    this.hideProcessing();
+                    this.showToast('info', 'Récupération des résultats...', 'Chargement des données finales');
+                    
+                    const response = await fetch(`${API_BASE}/pdf_results`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Impossible de récupérer les résultats');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.displayResults(result);
+                        this.updateStatusIndicator('connected', 'Traitement terminé');
+                        this.showToast('success', 'Résultats prêts!', 'Vous pouvez maintenant télécharger vos extractions');
+                    } else if (result.processing) {
+                        // Toujours en cours de traitement
+                        setTimeout(() => this.fetchFinalResults(), 2000);
+                    } else {
+                        throw new Error(result.error || 'Erreur inconnue');
+                    }
+                    
+                } catch (error) {
+                    console.error('Erreur récupération résultats:', error);
+                    this.showToast('error', 'Erreur', 'Impossible de récupérer les résultats');
+                    this.updateStatusIndicator('error', 'Erreur de récupération');
+                }
+            }
+
+            // === TRAITEMENT ===
+            async processImage() {
+                if (!this.currentImage) {
+                    this.showToast('warning', 'Aucun fichier', 'Veuillez sélectionner une image ou PDF d\'abord');
+                    return;
+                }
+
+                const isPDF = this.currentImage.name.toLowerCase().endsWith('.pdf');
+                
+                if (isPDF) {
+                    // Pour les PDF, démarrer avec la vérification OCR
+                    this.processImageWithIA(false);
+                } else {
+                    // Pour les images, traitement direct
+                    this.processImageWithIA(true);
+                }
+            }
+            
+            async processImageWithIA(skipOCRDetection = false) {
+                this.showProcessing();
+                this.updateStatusIndicator('processing', 'Analyse en cours...');
+                this.processingComplete = false;
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('file', this.currentImage);
+                    formData.append('sensitivity', document.getElementById('sensitivitySlider').value);
+                    formData.append('mode', document.getElementById('detectionMode').value);
+                    formData.append('skip_ocr_detection', skipOCRDetection.toString());
+
+                    const response = await fetch(`${API_BASE}/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Erreur serveur');
+                    }
+
+                    const result = await response.json();
+                    
+                    if (result.processing_started) {
+                        // Traitement PDF démarré avec WebSockets
+                        this.showToast('info', 'Traitement démarré', 'Suivi en temps réel activé');
+                        document.getElementById('processingText').textContent = 'Traitement PDF en cours...';
+                        document.getElementById('processingSubtext').textContent = 'Progression en temps réel';
+                    } else if (result.ocr_decision_required) {
+                        // Décision OCR requise - arrêter le processing
+                        this.hideProcessing();
+                        this.showToast('info', 'Analyse OCR terminée', 'Veuillez choisir votre option de traitement');
+                        // L'interface OCR devrait déjà être affichée via l'événement WebSocket
+                    } else {
+                        // Traitement image classique
+                        this.displayResults(result);
+                        this.updateStatusIndicator('connected', 'Analyse terminée');
+                    }
+                    
+                } catch (error) {
+                    console.error('Erreur:', error);
+                    this.showToast('error', 'Erreur d\'analyse', error.message);
+                    this.hideProcessing();
+                    this.updateStatusIndicator('error', 'Erreur d\'analyse');
+                }
+            }
+
+            showProcessing() {
+                document.getElementById('processing').classList.remove('hidden');
+                document.getElementById('results').classList.add('hidden');
+            }
+
+            hideProcessing() {
+                document.getElementById('processing').classList.add('hidden');
+            }
+
+            showResults() {
+                document.getElementById('results').classList.remove('hidden');
+                // Animation d'apparition
+                setTimeout(() => {
+                    document.getElementById('results').style.opacity = '1';
+                }, 10);
+            }
+
+            // === AFFICHAGE DES RÉSULTATS ===
+            async displayResults(result) {
+                this.hideProcessing();
+                this.showResults();
+
+                const infoDiv = document.getElementById('resultInfo');
+                
+                if (result.is_pdf) {
+                    // Affichage pour PDF multi-pages
+                    this.currentPDF = result;
+                    this.pdfPages = result.pages;
+                    
+                    infoDiv.innerHTML = `
+                        <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border border-green-200 p-6">
+                            <div class="flex items-center space-x-3 mb-4">
+                                <div class="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
+                                    <i class="fas fa-file-pdf text-white text-xl"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-xl font-bold text-green-900">PDF traité avec succès !</h3>
+                                    <p class="text-green-700">Analyse complète terminée</p>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div class="bg-white/60 rounded-xl p-4 text-center">
+                                    <div class="text-2xl font-bold text-green-600">${result.total_pages}</div>
+                                    <div class="text-sm text-green-700">Pages analysées</div>
+                                </div>
+                                <div class="bg-white/60 rounded-xl p-4 text-center">
+                                    <div class="text-2xl font-bold text-green-600">${result.total_rectangles}</div>
+                                    <div class="text-sm text-green-700">Rectangles détectés</div>
+                                </div>
+                                <div class="bg-white/60 rounded-xl p-4 text-center">
+                                    <div class="text-2xl font-bold text-green-600">ZIP</div>
+                                    <div class="text-sm text-green-700">Téléchargement organisé</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    this.displayPDFResults(result);
+                    this.showToast('success', 'PDF traité', `${result.total_rectangles} rectangles détectés sur ${result.total_pages} pages`);
+                    
+                } else {
+                    // Affichage pour image simple
+                    this.detectedRectangles = result.rectangles;
+                    
+                    if (result.rectangles_count > 0) {
+                        infoDiv.innerHTML = `
+                            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6">
+                                <div class="flex items-center space-x-3 mb-4">
+                                    <div class="w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center">
+                                        <i class="fas fa-crop-alt text-white text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-xl font-bold text-blue-900">Détection terminée !</h3>
+                                        <p class="text-blue-700">${result.rectangles_count} rectangles détectés</p>
+                                    </div>
+                                </div>
+                                <div class="bg-blue-100/50 rounded-xl p-4 text-center">
+                                    <p class="text-sm text-blue-800">
+                                        <i class="fas fa-info-circle mr-2"></i>
+                                        Cliquez sur les prévisualisations pour voir les coins détectés
+                                    </p>
+                                </div>
+                            </div>
+                        `;
+                        this.showToast('success', 'Détection réussie', `${result.rectangles_count} rectangles trouvés`);
+                    } else {
+                        infoDiv.innerHTML = `
+                            <div class="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-2xl border border-yellow-200 p-6">
+                                <div class="flex items-center space-x-3 mb-4">
+                                    <div class="w-12 h-12 bg-gradient-to-r from-yellow-500 to-orange-600 rounded-full flex items-center justify-center">
+                                        <i class="fas fa-search text-white text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-xl font-bold text-yellow-900">Aucun rectangle détecté</h3>
+                                        <p class="text-yellow-700">Essayez d'ajuster les paramètres</p>
+                                    </div>
+                                </div>
+                                <div class="bg-yellow-100/50 rounded-xl p-4">
+                                    <p class="text-sm text-yellow-800 mb-2">
+                                        <i class="fas fa-lightbulb mr-2"></i>
+                                        Suggestions d'amélioration :
+                                    </p>
+                                    <ul class="text-sm text-yellow-700 space-y-1 ml-6">
+                                        <li>• Augmentez la sensibilité de détection</li>
+                                        <li>• Changez de mode de détection</li>
+                                        <li>• Vérifiez que l'image contient des formes rectangulaires</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        `;
+                        this.showToast('warning', 'Aucun rectangle trouvé', 'Essayez d\'ajuster la sensibilité ou le mode');
+                    }
+
+                    this.displayImageResults(result);
+                }
+            }
+            
+            displayImageResults(result) {
+                const grid = document.getElementById('rectangleGrid');
+                grid.innerHTML = '';
+
+                if (result.rectangles_count === 0) return;
+
+                // Créer la grille des rectangles
+                const rectangleContainer = document.createElement('div');
+                rectangleContainer.innerHTML = `
+                    <h3 class="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                        <i class="fas fa-th-large mr-3 text-blue-500"></i>
+                        Rectangles détectés
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="imageRectanglesGrid">
+                    </div>
+                `;
+                grid.appendChild(rectangleContainer);
+
+                const imageGrid = document.getElementById('imageRectanglesGrid');
+                
+                result.rectangles.forEach((rect, index) => {
+                    const card = this.createModernRectangleCard(rect, index, false);
+                    imageGrid.appendChild(card);
+                });
+            }
+            
+            displayPDFResults(result) {
+                const grid = document.getElementById('rectangleGrid');
+                grid.innerHTML = '';
+                
+                // Actions globales PDF
+                const globalActions = document.createElement('div');
+                globalActions.innerHTML = `
+                    <div class="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl border border-purple-200 p-6 mb-8">
+                        <div class="text-center">
+                            <h3 class="text-2xl font-bold text-purple-900 mb-4">
+                                <i class="fas fa-download mr-3"></i>
+                                Actions globales
+                            </h3>
+                            <button onclick="window.rectangleClient.downloadAllPDF()" 
+                                    class="inline-flex items-center px-8 py-4 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-semibold rounded-2xl hover:from-purple-600 hover:to-indigo-700 transform hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-xl">
+                                <i class="fas fa-file-archive mr-3"></i>
+                                Télécharger TOUT le PDF (${result.total_rectangles} rectangles)
+                            </button>
+                            <p class="text-sm text-purple-700 mt-3">
+                                <i class="fas fa-tag mr-2"></i>
+                                Naming intelligent : <strong>${result.filename || 'document'}_page-01_rectangle-01.png</strong>
+                            </p>
+                            <p class="text-xs text-purple-600 mt-1">
+                                Toutes les images dans un seul ZIP avec noms explicites (pas de sous-dossiers)
+                            </p>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(globalActions);
+                
+                // Afficher chaque page
+                result.pages.forEach(pageResult => {
+                    const pageSection = this.createModernPDFPageSection(pageResult);
+                    grid.appendChild(pageSection);
+                });
+            }
+            
+            createModernRectangleCard(rect, index, isPDF = false, pageNumber = null) {
+                const card = document.createElement('div');
+                card.className = 'bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200 p-6 hover:shadow-xl transition-all duration-300 hover:-translate-y-2 group';
+                
+                const previewUrl = isPDF ? 
+                    `${API_BASE}/pdf_preview/${pageNumber}/${index}` : 
+                    `${API_BASE}/preview/${index}`;
+                
+                const confidenceHTML = rect.confidence ? 
+                    `<div class="flex items-center justify-center space-x-1 text-xs">
+                        <i class="fas fa-chart-line text-blue-500"></i>
+                        <span class="text-gray-600">Confiance: ${(rect.confidence * 100).toFixed(0)}%</span>
+                    </div>` : '';
+
+                const qualityIndicator = rect.is_bounding_box ? 
+                    `<div class="flex items-center space-x-2 px-3 py-1 bg-yellow-100 rounded-full">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 text-xs"></i>
+                        <span class="text-xs text-yellow-700 font-medium">Approximatif</span>
+                    </div>` :
+                    `<div class="flex items-center space-x-2 px-3 py-1 bg-green-100 rounded-full">
+                        <i class="fas fa-check-circle text-green-600 text-xs"></i>
+                        <span class="text-xs text-green-700 font-medium">Précis</span>
+                    </div>`;
+
+                // **NOUVEAU: Affichage du numéro d'œuvre détecté**
+                const artworkNumberHTML = rect.artwork_number ? 
+                    `<div class="flex items-center justify-center space-x-2 px-3 py-2 bg-gradient-to-r from-purple-100 to-indigo-100 rounded-xl border border-purple-200">
+                        <i class="fas fa-hashtag text-purple-600"></i>
+                        <span class="font-bold text-purple-800">${rect.artwork_number}</span>
+                        <span class="text-xs text-purple-600">OCR</span>
+                    </div>` :
+                    `<div class="flex items-center justify-center space-x-2 px-3 py-2 bg-gray-100 rounded-xl">
+                        <i class="fas fa-search text-gray-500"></i>
+                        <span class="text-xs text-gray-600">Numéro non détecté</span>
+                    </div>`;
+
+                card.innerHTML = `
+                    <div class="relative overflow-hidden rounded-xl mb-4 bg-gray-50">
+                        <img src="${previewUrl}" 
+                             alt="Rectangle ${index + 1}" 
+                             class="w-full h-48 object-contain transition-transform duration-300 group-hover:scale-105"
+                             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2YwZjBmMCIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwiPkVycmV1ciBkZSBjaGFyZ2VtZW50PC90ZXh0Pjwvc3ZnPg=='">
+                        <div class="absolute top-3 right-3">
+                            ${qualityIndicator}
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div class="text-center">
+                            <h4 class="text-lg font-bold text-gray-900">Rectangle ${index + 1}</h4>
+                            ${isPDF ? `<p class="text-sm text-gray-600">Page ${pageNumber}</p>` : ''}
+                        </div>
+                        
+                        <!-- **NOUVEAU: Affichage du numéro d'œuvre** -->
+                        ${artworkNumberHTML}
+                        
+                        <div class="grid grid-cols-2 gap-3 text-sm">
+                            <div class="bg-gray-50 rounded-lg p-2 text-center">
+                                <div class="font-semibold text-gray-900">${rect.bbox.w} × ${rect.bbox.h}</div>
+                                <div class="text-gray-600">Dimensions</div>
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-2 text-center">
+                                <div class="font-semibold text-gray-900">${(rect.area/1000).toFixed(0)}k</div>
+                                <div class="text-gray-600">Pixels</div>
+                            </div>
+                        </div>
+                        
+                        ${confidenceHTML}
+                        
+                        <div class="flex space-x-2 pt-3">
+                            <button onclick="window.rectangleClient.${isPDF ? 'downloadPDFRectangle' : 'downloadRectangle'}(${isPDF ? pageNumber + ', ' : ''}${index}, 'png')" 
+                                    class="flex-1 inline-flex items-center justify-center px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-sm font-medium rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200">
+                                <i class="fas fa-download mr-2"></i>
+                                PNG
+                            </button>
+                            <button onclick="window.rectangleClient.${isPDF ? 'downloadPDFRectangle' : 'downloadRectangle'}(${isPDF ? pageNumber + ', ' : ''}${index}, 'jpg')" 
+                                    class="flex-1 inline-flex items-center justify-center px-3 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-sm font-medium rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200">
+                                <i class="fas fa-download mr-2"></i>
+                                JPG
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                return card;
+            }
+            
+            createModernPDFPageSection(pageResult) {
+                const section = document.createElement('div');
+                section.className = 'bg-white/60 backdrop-blur-sm rounded-2xl border border-gray-200 p-6 mb-6';
+                
+                const header = document.createElement('div');
+                header.className = 'flex items-center justify-between pb-4 mb-6 border-b border-gray-200';
+                header.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-file-alt text-white"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-xl font-bold text-gray-900">Page ${pageResult.page_number}</h4>
+                            <p class="text-sm text-gray-600">${pageResult.rectangles_count} rectangles détectés</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2 px-3 py-1 bg-blue-100 rounded-full">
+                        <i class="fas fa-shapes text-blue-600 text-sm"></i>
+                        <span class="text-sm font-medium text-blue-700">${pageResult.rectangles_count}</span>
+                    </div>
+                `;
+                section.appendChild(header);
+                
+                if (pageResult.rectangles_count === 0) {
+                    const noRects = document.createElement('div');
+                    noRects.className = 'text-center py-8 text-gray-500';
+                    noRects.innerHTML = `
+                        <i class="fas fa-search text-4xl mb-3 opacity-50"></i>
+                        <p class="text-lg">Aucun rectangle détecté sur cette page</p>
+                    `;
+                    section.appendChild(noRects);
+                    return section;
+                }
+                
+                const pageGrid = document.createElement('div');
+                pageGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+                
+                pageResult.rectangles.forEach((rect, index) => {
+                    const card = this.createModernRectangleCard(rect, index, true, pageResult.page_number);
+                    pageGrid.appendChild(card);
+                });
+                
+                section.appendChild(pageGrid);
+                return section;
+            }
+
+            // === TÉLÉCHARGEMENTS ===
+            async downloadRectangle(index, format) {
+                try {
+                    this.showToast('info', 'Téléchargement...', `Rectangle ${index + 1} en cours`);
+                    
+                    const url = `${API_BASE}/extract/${index}?format=${format}`;
+                    const response = await fetch(url);
+                    
+                    if (!response.ok) {
+                        throw new Error('Erreur lors du téléchargement');
+                    }
+                    
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = `rectangle-${index + 1}.${format}`;
+                    link.click();
+                    
+                    window.URL.revokeObjectURL(downloadUrl);
+                    this.showToast('success', 'Téléchargé !', `Rectangle ${index + 1} en ${format.toUpperCase()}`);
+                    
+                } catch (error) {
+                    console.error('Erreur téléchargement:', error);
+                    this.showToast('error', 'Erreur de téléchargement', error.message);
+                }
+            }
+
+            async downloadPDFRectangle(pageNumber, rectangleIndex, format) {
+                try {
+                    this.showToast('info', 'Téléchargement PDF...', `Page ${pageNumber}, Rectangle ${rectangleIndex + 1}`);
+                    
+                    const url = `${API_BASE}/pdf_extract/${pageNumber}/${rectangleIndex}?format=${format}`;
+                    const response = await fetch(url);
+                    
+                    if (!response.ok) {
+                        throw new Error('Erreur lors du téléchargement');
+                    }
+                    
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    // **NOUVEAU: Utiliser le numéro d'œuvre dans le nom si disponible**
+                    let filename = `page-${pageNumber}-rectangle-${rectangleIndex + 1}.${format}`;
+                    
+                    // Essayer de récupérer le numéro d'œuvre pour ce rectangle
+                    if (this.currentPDF && this.currentPDF.pages) {
+                        for (const pageResult of this.currentPDF.pages) {
+                            if (pageResult.page_number === pageNumber && 
+                                pageResult.rectangles && 
+                                pageResult.rectangles[rectangleIndex] && 
+                                pageResult.rectangles[rectangleIndex].artwork_number) {
+                                
+                                const artworkNumber = pageResult.rectangles[rectangleIndex].artwork_number;
+                                const pdfName = this.currentPDF.filename || 'document';
+                                filename = `${pdfName}_${artworkNumber}_page-${pageNumber}.${format}`;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = filename;
+                    link.click();
+                    
+                    window.URL.revokeObjectURL(downloadUrl);
+                    this.showToast('success', 'Téléchargé !', `${filename}`);
+                    
+                } catch (error) {
+                    console.error('Erreur téléchargement PDF:', error);
+                    this.showToast('error', 'Erreur de téléchargement', error.message);
+                }
+            }
+
+            downloadAll() {
+                if (this.currentPDF) {
+                    this.downloadAllPDF();
+                } else if (this.detectedRectangles.length > 0) {
+                    this.downloadAllRectangles();
+                } else {
+                    this.showToast('warning', 'Aucun contenu', 'Aucun rectangle à télécharger');
+                }
+            }
+
+            async downloadAllRectangles() {
+                try {
+                    this.showToast('info', 'Création du ZIP...', `${this.detectedRectangles.length} rectangles`);
+                    
+                    const response = await fetch(`${API_BASE}/extract_all`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Erreur lors de la création du ZIP');
+                    }
+                    
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = `rectangles-extraits-${this.detectedRectangles.length}.zip`;
+                    link.click();
+                    
+                    window.URL.revokeObjectURL(downloadUrl);
+                    this.showToast('success', 'ZIP téléchargé !', `${this.detectedRectangles.length} rectangles inclus`);
+                    
+                } catch (error) {
+                    console.error('Erreur téléchargement ZIP:', error);
+                    this.showToast('error', 'Erreur ZIP', error.message);
+                }
+            }
+
+            async downloadAllPDF() {
+                try {
+                    if (!this.currentPDF) {
+                        this.showToast('error', 'Erreur', 'Aucun PDF analysé');
+                        return;
+                    }
+
+                    const pdfName = this.currentPDF.filename || 'document';
+                    this.showToast('info', 'Création du ZIP PDF...', `${this.currentPDF.total_rectangles} rectangles de ${pdfName}.pdf`);
+                    
+                    const response = await fetch(`${API_BASE}/pdf_extract_all`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Erreur lors de la création du ZIP');
+                    }
+                    
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = `${pdfName}.zip`;  // Utiliser le nom intelligent
+                    link.click();
+                    
+                    window.URL.revokeObjectURL(downloadUrl);
+                    this.showToast('success', 'ZIP téléchargé !', `${pdfName}.zip avec naming intelligent créé`);
+                    
+                } catch (error) {
+                    console.error('Erreur téléchargement PDF:', error);
+                    this.showToast('error', 'Erreur PDF', error.message);
+                }
+            }
+
+            // === RESET ===
+            reset() {
+                document.getElementById('controls').classList.add('hidden');
+                document.getElementById('processing').classList.add('hidden');
+                document.getElementById('results').classList.add('hidden');
+                document.getElementById('fileInput').value = '';
+                
+                this.currentImage = null;
+                this.detectedRectangles = [];
+                this.currentPDF = null;
+                this.pdfPages = [];
+                
+                document.getElementById('sensitivitySlider').value = 50;
+                document.getElementById('sensitivityValue').textContent = '50';
+                document.getElementById('detectionMode').value = 'general';
+                this.updateMode();
+                
+                this.updateStatusIndicator('connected', 'Prêt');
+                this.showToast('info', 'Réinitialisé', 'Prêt pour une nouvelle analyse');
+            }
+        }
+
+        // Initialiser l'application
+        window.rectangleClient = new ModernRectangleClient();
+    </script>
+</body>
+</html> 
