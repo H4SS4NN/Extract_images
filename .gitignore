@@ -1,1 +1,12 @@
 uploads/
+extractions/
+extractions_smart/
+extractions_ultra/
+processed/
+test_images/
+test_results/
+test_results_smart/
+test_results_ultra/
+test_results_script/
+.venv/
+.env
