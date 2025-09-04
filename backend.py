@@ -328,24 +328,76 @@ class PDFProcessor:
                     'stage': 'conversion'
                 })
                 
-                try:
-                    # Convertir SEULEMENT cette page en ultra haute qualité
-                    page_images = convert_from_path(
-                        pdf_path, 
-                        dpi=600,  # ULTRA HAUTE QUALITÉ
-                        first_page=page_num,
-                        last_page=page_num
-                    )
-                    
-                    if not page_images:
-                        logger.warning(f"⚠️ Page {page_num}: Conversion échouée")
-                        continue
+                # **NOUVEAU: ANALYSE AUTOMATIQUE DE LA PAGE**
+                logger.info(f"📏 Analyse dimensions page {page_num}...")
+                page_analysis = page_analyzer.analyze_page_dimensions(pdf_path, page_num)
+                
+                optimal_dpi = page_analysis['recommended_dpi']
+                detection_params = page_analysis['detection_params']
+                
+                logger.info(f"📄 Page {page_num}: {page_analysis['page_format']} "
+                           f"({page_analysis['width_mm']}×{page_analysis['height_mm']}mm) "
+                           f"→ DPI optimal: {optimal_dpi}")
+                
+                # **CORRECTION 3: Retry avec DPI adaptatif + timeout**
+                page_image = None
+                retry_count = 0
+                max_retries = 2
+                # DPI adaptatifs basés sur l'analyse de la page
+                dpi_levels = [optimal_dpi, max(150, optimal_dpi // 2), 150]
+                
+                while retry_count < max_retries and page_image is None:
+                    try:
+                        current_dpi = dpi_levels[min(retry_count, len(dpi_levels)-1)]
+                        logger.info(f"🔄 Page {page_num} - Tentative {retry_count+1}/{max_retries} - DPI {current_dpi} "
+                                   f"(estimé: {detection_params['estimated_megapixels']}MP)")
                         
-                    page_image = page_images[0]
-                    
-                except Exception as e:
-                    logger.error(f"❌ Page {page_num}: Erreur conversion - {e}")
-                    continue
+                        # Convertir avec timeout (compatible Windows)
+                        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+                        
+                        def convert_page():
+                            return convert_from_path(
+                                pdf_path, 
+                                dpi=current_dpi,
+                                first_page=page_num,
+                                last_page=page_num
+                            )
+                        
+                        # Timeout avec ThreadPoolExecutor (compatible Windows)
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(convert_page)
+                            try:
+                                page_images = future.result(timeout=30)  # 30 secondes max
+                            except FutureTimeoutError:
+                                raise TimeoutError("Timeout conversion page")
+                        
+                        if page_images:
+                            page_image = page_images[0]
+                            if retry_count > 0:
+                                logger.info(f"✅ Page {page_num}: Réussie avec DPI {current_dpi}")
+                        else:
+                            raise Exception("Aucune image retournée")
+                            
+                    except (Exception, TimeoutError, FutureTimeoutError) as e:
+                        retry_count += 1
+                        logger.warning(f"⚠️ Page {page_num} tentative {retry_count}: {e}")
+                        
+                        if retry_count >= max_retries:
+                            logger.error(f"❌ Page {page_num}: Toutes les tentatives échouées")
+                            # Envoyer une page vide pour ne pas bloquer
+                            socketio.emit('page_results', {
+                                'page_number': page_num,
+                                'rectangles': [],
+                                'rectangles_count': 0,
+                                'processing_time': 0.1,
+                                'progress_percent': (page_num / total_pages) * 100,
+                                'message': f"Page {page_num} échouée - Ignorée",
+                                'error': True
+                            })
+                            break
+                
+                if page_image is None:
+                    continue  # Passer à la page suivante
                 
                 # **2. TRAITER IMMÉDIATEMENT CETTE PAGE**
                 socketio.emit('page_processing', {
@@ -359,15 +411,30 @@ class PDFProcessor:
                 page_array = np.array(page_image)
                 page_cv = cv2.cvtColor(page_array, cv2.COLOR_RGB2BGR)
                 
-                # Stocker l'image de la page
+                # **CORRECTION 2: Ne pas stocker toutes les images en mémoire**
+                # Juste garder pour la page courante - économie de RAM massive
                 page_data = {
                     'page_number': page_num,
                     'image': page_cv
                 }
+                # Ne stocker que les 3 dernières pages pour économiser la mémoire
                 self.pages.append(page_data)
+                if len(self.pages) > 3:
+                    self.pages.pop(0)  # Supprimer la plus ancienne
                 
-                # Détecter les rectangles sur cette page
-                rectangles = detector.detect_rectangles(page_cv, sensitivity, mode)
+                # **DÉTECTER AVEC PARAMÈTRES ADAPTATIFS**
+                logger.info(f"🎯 Détection avec paramètres adaptatifs: "
+                           f"seuil={detection_params['min_area']}, "
+                           f"max_rect={detection_params['max_rectangles']}")
+                
+                # Passer les paramètres optimisés à la détection AVEC DEBUG
+                rectangles = detector.detect_rectangles(
+                    page_cv, 
+                    sensitivity, 
+                    mode,
+                    adaptive_params=detection_params,
+                    debug_page_num=page_num  # Activer logs détaillés avec numéro de page
+                )
                 
                 # **CONVERTIR TOUS LES ARRAYS NUMPY EN LISTES POUR LA SÉRIALISATION JSON**
                 for rect in rectangles:
@@ -405,13 +472,36 @@ class PDFProcessor:
                 logger.info(f"✅ Page {page_num}: {len(rectangles)} rectangles détectés en {page_time:.1f}s")
                 
                 # **3. ENVOYER LES RÉSULTATS DE CETTE PAGE IMMÉDIATEMENT !**
+                # **DEBUGGING: Comparaison web vs debug**
+                logger.info(f"🔍 COMPARAISON DEBUG - Page {page_num}:")
+                logger.info(f"   - Rectangles trouvés: {len(rectangles)}")
+                logger.info(f"   - Paramètres utilisés: DPI {current_dpi}, Mode {mode}, Sensibilité {sensitivity}")
+                logger.info(f"   - Format page: {page_analysis['page_format']}")
+                logger.info(f"   - Seuil aire: {detection_params['min_area']}")
+                
+                # Log détaillé des rectangles pour debug
+                if len(rectangles) > 0:
+                    for i, rect in enumerate(rectangles[:3]):  # Max 3 pour éviter spam
+                        bbox = rect.get('bbox', {})
+                        area = rect.get('area', 0)
+                        logger.info(f"   - Rectangle {i+1}: {bbox.get('w', 0)}×{bbox.get('h', 0)}, aire={area:.0f}")
+                else:
+                    logger.warning(f"   ⚠️ AUCUN RECTANGLE - Page {page_num} problématique!")
+                
                 socketio.emit('page_results', {
                     'page_number': page_num,
                     'rectangles': rectangles,
                     'rectangles_count': len(rectangles),
                     'processing_time': page_time,
                     'progress_percent': (page_num / total_pages) * 100,
-                    'message': f"Page {page_num} terminée - {len(rectangles)} rectangles trouvés"
+                    'message': f"Page {page_num} terminée - {len(rectangles)} rectangles trouvés",
+                    # **NOUVEAU: Debug info pour comprendre les différences**
+                    'debug_info': {
+                        'dpi_used': current_dpi,
+                        'page_format': page_analysis['page_format'],
+                        'seuil_aire': detection_params['min_area'],
+                        'estimated_mp': detection_params['estimated_megapixels']
+                    }
                 })
                 
                 logger.info(f"📤 Résultats page {page_num} envoyés au frontend")
@@ -461,6 +551,7 @@ class PDFProcessor:
 
 pdf_processor = PDFProcessor()
 ocr_detector = OCRDetector()
+# page_analyzer sera défini après la classe PDFPageAnalyzer
 
 class RectangleDetector:
     def __init__(self):
@@ -525,17 +616,27 @@ class RectangleDetector:
         
         return warped
     
-    def detect_rectangles(self, image, sensitivity=50, mode='general'):
-        """Méthode principale de détection avec différents modes"""
+    def detect_rectangles(self, image, sensitivity=50, mode='general', adaptive_params=None, debug_page_num=None):
+        """Méthode principale de détection avec différents modes et logs détaillés"""
         logger.info(f"🔍 Mode: {mode}, Sensibilité: {sensitivity}")
         
+        # **NOUVEAU: Debug détaillé avec numéro de page**
+        if debug_page_num:
+            logger.info(f"🐛 DEBUG PAGE {debug_page_num} - Début analyse détaillée")
+        
         try:
+            # **ÉTAPE 1: ANALYSE DE L'IMAGE D'ENTRÉE**
+            height, width = image.shape[:2]
+            total_pixels = height * width
+            logger.info(f"📐 Image: {width}×{height} = {total_pixels:,} pixels ({total_pixels/1000000:.1f}MP)")
+            
             # Prétraitement adaptatif selon le mode
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            logger.info(f"✅ Conversion en niveaux de gris terminée")
             
-            # **ADAPTATION SELON LE MODE**
+            # **ADAPTATION SELON LE MODE AVEC LOGS**
             if mode == 'documents':
-                # Mode spécialisé pour documents multiples (blanc/blanc)
+                logger.info("📄 Mode DOCUMENTS - Optimisé pour docs multiples")
                 denoised = cv2.fastNlMeansDenoising(gray, h=10)
                 clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16,16))
                 enhanced = clahe.apply(denoised)
@@ -543,7 +644,7 @@ class RectangleDetector:
                 canny_high = 20
                 min_area_divisor = 400
             elif mode == 'high_contrast':
-                # Mode pour objets bien contrastés
+                logger.info("🎯 Mode HIGH_CONTRAST - Optimisé pour objets contrastés")
                 denoised = cv2.GaussianBlur(gray, (3, 3), 0)
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
                 enhanced = clahe.apply(denoised)
@@ -551,6 +652,7 @@ class RectangleDetector:
                 canny_high = max(80, sensitivity * 2)
                 min_area_divisor = 100
             else:  # mode general
+                logger.info("⚖️ Mode GENERAL - Équilibré")
                 denoised = cv2.fastNlMeansDenoising(gray)
                 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
                 enhanced = clahe.apply(denoised)
@@ -558,13 +660,22 @@ class RectangleDetector:
                 canny_high = max(30, sensitivity)
                 min_area_divisor = 200
             
-            # Détection de bords et combinaison de techniques
+            logger.info(f"🎛️ Paramètres Canny: {canny_low}-{canny_high}, Diviseur aire: {min_area_divisor}")
+            
+            # **ÉTAPE 2: DÉTECTION DE BORDS MULTIPLE AVEC LOGS**
+            logger.info("🔄 Étape 2: Détection de bords...")
+            
+            # Détection de bords sensible
             edges_sensitive = cv2.Canny(enhanced, canny_low, canny_high)
+            edge_pixels = cv2.countNonZero(edges_sensitive)
+            logger.info(f"   📊 Bords détectés: {edge_pixels:,} pixels ({edge_pixels/total_pixels*100:.2f}%)")
             
             # Gradient morphologique
             kernel_grad = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
             gradient = cv2.morphologyEx(enhanced, cv2.MORPH_GRADIENT, kernel_grad)
             _, gradient_thresh = cv2.threshold(gradient, sensitivity // 4, 255, cv2.THRESH_BINARY)
+            gradient_pixels = cv2.countNonZero(gradient_thresh)
+            logger.info(f"   📊 Gradients: {gradient_pixels:,} pixels ({gradient_pixels/total_pixels*100:.2f}%)")
             
             # Seuillage adaptatif
             block_size = 15 if mode == 'documents' else 11
@@ -573,12 +684,20 @@ class RectangleDetector:
                 cv2.THRESH_BINARY, block_size, 2
             )
             adaptive_thresh = cv2.bitwise_not(adaptive_thresh)
+            adaptive_pixels = cv2.countNonZero(adaptive_thresh)
+            logger.info(f"   📊 Seuillage adaptatif: {adaptive_pixels:,} pixels ({adaptive_pixels/total_pixels*100:.2f}%)")
             
             # Combiner toutes les techniques
             combined = cv2.bitwise_or(edges_sensitive, gradient_thresh)
             combined = cv2.bitwise_or(combined, adaptive_thresh)
+            combined_pixels = cv2.countNonZero(combined)
+            logger.info(f"   📊 Combiné final: {combined_pixels:,} pixels ({combined_pixels/total_pixels*100:.2f}%)")
             
-            # Morphologie adaptée
+            if combined_pixels < total_pixels * 0.001:  # Moins de 0.1% de pixels détectés
+                logger.warning(f"⚠️ TRÈS PEU DE BORDS DÉTECTÉS - Possible image trop homogène ou seuils inadaptés")
+            
+            # **ÉTAPE 3: MORPHOLOGIE AVEC LOGS**
+            logger.info("🔄 Étape 3: Morphologie...")
             if mode == 'documents':
                 kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
                 combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close, iterations=2)
@@ -586,31 +705,82 @@ class RectangleDetector:
                 kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close)
             
-            # Détection des contours
-            contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            logger.info(f"Contours trouvés: {len(contours)}")
+            morph_pixels = cv2.countNonZero(combined)
+            logger.info(f"   📊 Après morphologie: {morph_pixels:,} pixels")
             
-            if not contours:
-                logger.warning("Aucun contour détecté")
+            # **ÉTAPE 4: DÉTECTION DES CONTOURS AVEC LOGS DÉTAILLÉS**
+            logger.info("🔄 Étape 4: Détection des contours...")
+            contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            logger.info(f"   📊 Contours bruts trouvés: {len(contours)}")
+            
+            if len(contours) == 0:
+                logger.error(f"❌ AUCUN CONTOUR DÉTECTÉ - Problème dans la détection de bords")
+                logger.error(f"   - Pixels de bords: {edge_pixels:,}")
+                logger.error(f"   - Sensibilité utilisée: {sensitivity}")
+                logger.error(f"   - Mode: {mode}")
+                logger.error(f"   - Paramètres Canny: {canny_low}-{canny_high}")
                 return []
             
-            # Filtrage et approximation des rectangles
+            # **NOUVEAU: SEUILS INTELLIGENTS AVEC ANALYSE DE PAGE ET LOGS**
             rectangles = []
-            min_area = (image.shape[0] * image.shape[1]) / min_area_divisor
+            
+            if adaptive_params:
+                # Utiliser les paramètres calculés spécifiquement pour cette page
+                min_area = adaptive_params['min_area']
+                max_rectangles_limit = adaptive_params['max_rectangles']
+                logger.info(f"🎯 Paramètres adaptatifs: aire_min={min_area:.0f}, "
+                           f"max_rect={max_rectangles_limit}, "
+                           f"taille_réelle={adaptive_params['estimated_megapixels']}MP")
+            else:
+                # Fallback : seuils adaptatifs basiques
+                image_megapixels = total_pixels / 1000000
+                if image_megapixels > 50:
+                    min_area_divisor = min_area_divisor * 2
+                    max_rectangles_limit = 50
+                elif image_megapixels > 20:
+                    max_rectangles_limit = 40
+                else:
+                    max_rectangles_limit = 30
+                
+                min_area = total_pixels / min_area_divisor
+                logger.info(f"🔍 Mode fallback - Image {image_megapixels:.1f}MP, seuil={min_area:.0f}")
+            
             contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            logger.info(f"📏 Seuil aire minimale: {min_area:.0f} pixels")
+            
+            # **ÉTAPE 5: ANALYSE DÉTAILLÉE DE CHAQUE CONTOUR**
+            logger.info("🔄 Étape 5: Analyse des contours...")
+            
+            contours_analyzed = 0
+            contours_too_small = 0
+            contours_not_4_corners = 0
+            contours_not_convex = 0
+            contours_low_ratio = 0
             
             for i, contour in enumerate(contours):
                 area = cv2.contourArea(contour)
+                contours_analyzed += 1
+                
+                # Log détaillé pour les 10 premiers contours
+                if i < 10 or debug_page_num:
+                    logger.info(f"   🔍 Contour {i+1}: aire={area:.0f} (seuil={min_area:.0f})")
                 
                 if area < min_area:
+                    contours_too_small += 1
+                    if i < 5 or debug_page_num:  # Log détaillé pour debug
+                        logger.info(f"      ❌ Trop petit: {area:.0f} < {min_area:.0f}")
                     continue
                 
-                # Approximation progressive
+                # Approximation progressive AVEC LOGS
                 epsilon_steps = [0.003, 0.005, 0.008, 0.012, 0.015] if mode == 'documents' else [0.005, 0.01, 0.015, 0.02, 0.025]
+                found_rectangle = False
                 
-                for epsilon_mult in epsilon_steps:
+                for j, epsilon_mult in enumerate(epsilon_steps):
                     epsilon = epsilon_mult * cv2.arcLength(contour, True)
                     approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    if i < 5 or debug_page_num:
+                        logger.info(f"      🔄 Approx {j+1}: epsilon={epsilon_mult}, coins={len(approx)}")
                     
                     if len(approx) == 4 and cv2.isContourConvex(approx):
                         rectangles.append({
@@ -621,13 +791,24 @@ class RectangleDetector:
                             'bbox': cv2.boundingRect(contour),
                             'mode': mode
                         })
+                        found_rectangle = True
+                        if i < 5 or debug_page_num:
+                            logger.info(f"      ✅ Rectangle validé!")
                         break
-                else:
-                    # Fallback rectangle englobant
+                    elif len(approx) != 4:
+                        contours_not_4_corners += 1
+                    elif not cv2.isContourConvex(approx):
+                        contours_not_convex += 1
+                
+                if not found_rectangle:
+                    # Fallback rectangle englobant AVEC LOGS
                     x, y, w, h = cv2.boundingRect(contour)
                     bbox_area = w * h
                     area_ratio = area / bbox_area if bbox_area > 0 else 0
                     ratio_threshold = 0.5 if mode == 'documents' else 0.6
+                    
+                    if i < 5 or debug_page_num:
+                        logger.info(f"      🔄 Fallback bbox: ratio={area_ratio:.2f} (seuil={ratio_threshold})")
                     
                     if area_ratio > ratio_threshold:
                         corners = np.array([
@@ -644,14 +825,55 @@ class RectangleDetector:
                             'confidence': area_ratio,
                             'mode': mode
                         })
+                        if i < 5 or debug_page_num:
+                            logger.info(f"      ✅ Rectangle bbox accepté!")
+                    else:
+                        contours_low_ratio += 1
+                        if i < 5 or debug_page_num:
+                            logger.info(f"      ❌ Bbox rejeté: ratio trop faible")
                 
-                max_rectangles = 20 if mode == 'documents' else 15
+                # **LIMITE INTELLIGENTE AVEC ANALYSE DE PAGE**
+                if adaptive_params:
+                    max_rectangles = adaptive_params['max_rectangles']
+                else:
+                    # Fallback
+                    image_megapixels = (image.shape[0] * image.shape[1]) / 1000000
+                    if image_megapixels > 50:
+                        max_rectangles = 50
+                    elif mode == 'documents':
+                        max_rectangles = 30
+                    else:
+                        max_rectangles = 20
+                
                 if len(rectangles) >= max_rectangles:
+                    logger.info(f"📊 Limite optimale atteinte: {max_rectangles} rectangles "
+                               f"(adapté à cette page)")
                     break
+            
+            # **ÉTAPE 6: STATISTIQUES DÉTAILLÉES**
+            logger.info(f"📊 STATISTIQUES DE DÉTECTION:")
+            logger.info(f"   - Contours analysés: {contours_analyzed}")
+            logger.info(f"   - Rejetés (trop petits): {contours_too_small}")
+            logger.info(f"   - Rejetés (pas 4 coins): {contours_not_4_corners}")
+            logger.info(f"   - Rejetés (pas convexes): {contours_not_convex}")
+            logger.info(f"   - Rejetés (ratio faible): {contours_low_ratio}")
+            logger.info(f"   - Rectangles validés: {len(rectangles)}")
+            
+            if len(rectangles) == 0:
+                logger.warning(f"⚠️ AUCUN RECTANGLE DÉTECTÉ!")
+                logger.warning(f"   - Seuil aire peut être trop strict: {min_area:.0f}")
+                logger.warning(f"   - Plus grand contour: {cv2.contourArea(contours[0]):.0f}")
+                logger.warning(f"   - Ratio: {cv2.contourArea(contours[0])/min_area:.2f}")
+                
+                # Suggestion d'ajustement
+                if cv2.contourArea(contours[0]) > min_area * 0.5:
+                    logger.warning(f"💡 SUGGESTION: Réduire la sensibilité ou ajuster le mode")
+                else:
+                    logger.warning(f"💡 SUGGESTION: Vérifier la qualité de l'image ou le prétraitement")
             
             # Filtrage des chevauchements
             rectangles = self.filter_overlapping_rectangles(rectangles)
-            logger.info(f"✅ {len(rectangles)} rectangles détectés")
+            logger.info(f"✅ {len(rectangles)} rectangles après filtrage des doublons")
             
             # **NOUVEAU: Détection des numéros d'œuvre**
             if rectangles:
@@ -676,6 +898,8 @@ class RectangleDetector:
             
         except Exception as e:
             logger.error(f"❌ Erreur lors de la détection: {str(e)}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return []
     
     def filter_overlapping_rectangles(self, rectangles):
@@ -1899,6 +2123,7 @@ def extract_images_from_pdf(filename):
         doc.close()
         
         if image_count == 0:
+            logger.warning(f"⚠️ Aucune image trouvée dans {filename}")
             return jsonify({'error': 'Aucune image trouvée dans le PDF'}), 400
         
         logger.info(f"✅ Extraction terminée: {image_count} images trouvées")
@@ -1917,6 +2142,592 @@ def extract_images_from_pdf(filename):
         logger.error(f"Erreur extraction images: {str(e)}")
         return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
 
+@app.route('/debug_page/<filename>/<int:page_number>')
+def debug_specific_page(filename, page_number):
+    """Endpoint pour débugger une page spécifique d'un PDF"""
+    try:
+        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Fichier non trouvé'}), 404
+        
+        logger.info(f"🔍 DEBUG Page {page_number} de {filename}")
+        
+        # Paramètres
+        sensitivity = int(request.args.get('sensitivity', 50))
+        mode = request.args.get('mode', 'general')
+        dpi = int(request.args.get('dpi', 300))
+        
+        try:
+            # Convertir juste cette page
+            page_images = convert_from_path(
+                filepath, 
+                dpi=dpi,
+                first_page=page_number,
+                last_page=page_number
+            )
+            
+            if not page_images:
+                return jsonify({'error': f'Impossible de convertir la page {page_number}'}), 400
+                
+            page_image = page_images[0]
+            
+            # Convertir pour OpenCV
+            page_array = np.array(page_image)
+            page_cv = cv2.cvtColor(page_array, cv2.COLOR_RGB2BGR)
+            
+            # **ANALYSER AVEC LE NOUVEAU SYSTÈME ADAPTATIF**
+            logger.info(f"📏 Analyse automatique page {page_number}...")
+            page_analysis = page_analyzer.analyze_page_dimensions(filepath, page_number)
+            
+            start_time = time.time()
+            rectangles = detector.detect_rectangles(
+                page_cv, 
+                sensitivity, 
+                mode,
+                adaptive_params=page_analysis['detection_params'],
+                debug_page_num=page_number  # Debug pour endpoint de test
+            )
+            processing_time = time.time() - start_time
+            
+            # Convertir pour JSON
+            for rect in rectangles:
+                if 'corners' in rect and hasattr(rect['corners'], 'tolist'):
+                    rect['corners'] = rect['corners'].tolist()
+                if 'bbox' in rect and isinstance(rect['bbox'], tuple):
+                    x, y, w, h = rect['bbox']
+                    rect['bbox'] = {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+                if 'contour' in rect:
+                    del rect['contour']
+                for key, value in rect.items():
+                    if hasattr(value, 'tolist'):
+                        rect[key] = value.tolist()
+                    elif hasattr(value, 'item'):
+                        rect[key] = value.item()
+            
+            # Retourner les détails de debug avec analyse de page
+            return jsonify({
+                'success': True,
+                'page_number': page_number,
+                'filename': filename,
+                'image_size': f"{page_cv.shape[1]}x{page_cv.shape[0]}",
+                'image_megapixels': round((page_cv.shape[0] * page_cv.shape[1]) / 1000000, 1),
+                'dpi_used': dpi,
+                'sensitivity': sensitivity,
+                'mode': mode,
+                'processing_time': round(processing_time, 2),
+                'rectangles_found': len(rectangles),
+                'rectangles': rectangles,
+                # **NOUVEAU: Analyse intelligente de la page**
+                'page_analysis': {
+                    'physical_size': f"{page_analysis['width_mm']}×{page_analysis['height_mm']}mm",
+                    'page_format': page_analysis['page_format'],
+                    'area_mm2': page_analysis['area_mm2'],
+                    'recommended_dpi': page_analysis['recommended_dpi'],
+                    'dpi_actually_used': dpi,
+                    'optimal_vs_used': 'Optimal' if dpi == page_analysis['recommended_dpi'] else f"Dégradé ({page_analysis['recommended_dpi']} → {dpi})"
+                },
+                'detection_params': page_analysis['detection_params'],
+                'debug_info': {
+                    'total_pixels': page_cv.shape[0] * page_cv.shape[1],
+                    'adaptive_min_area': page_analysis['detection_params']['min_area'],
+                    'adaptive_max_rectangles': page_analysis['detection_params']['max_rectangles'],
+                    'analysis_cache_hit': f"{filepath}_{page_number}" in page_analyzer.page_cache
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Erreur debug page {page_number}: {e}")
+            return jsonify({'error': f'Erreur traitement page: {str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Erreur debug: {str(e)}")
+        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
+@app.route('/debug_visual/<filename>/<int:page_number>')
+def debug_visual_page(filename, page_number):
+    """Endpoint pour débugger visuellement une page avec images intermédiaires"""
+    try:
+        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Fichier non trouvé'}), 404
+        
+        logger.info(f"🎨 DEBUG VISUEL Page {page_number} de {filename}")
+        
+        # Paramètres
+        sensitivity = int(request.args.get('sensitivity', 50))
+        mode = request.args.get('mode', 'high_contrast')
+        dpi = int(request.args.get('dpi', 300))
+        
+        try:
+            # Convertir la page
+            page_images = convert_from_path(
+                filepath, 
+                dpi=dpi,
+                first_page=page_number,
+                last_page=page_number
+            )
+            
+            if not page_images:
+                return jsonify({'error': f'Impossible de convertir la page {page_number}'}), 400
+                
+            page_image = page_images[0]
+            page_array = np.array(page_image)
+            page_cv = cv2.cvtColor(page_array, cv2.COLOR_RGB2BGR)
+            
+            # Analyser la page
+            page_analysis = page_analyzer.analyze_page_dimensions(filepath, page_number)
+            detection_params = page_analysis['detection_params']
+            
+            logger.info(f"🎨 Génération des images de debug...")
+            
+            # **CRÉER LES IMAGES INTERMÉDIAIRES**
+            debug_images = {}
+            
+            # 1. Image originale
+            debug_images['01_original'] = page_cv.copy()
+            
+            # 2. Niveaux de gris
+            gray = cv2.cvtColor(page_cv, cv2.COLOR_BGR2GRAY)
+            debug_images['02_gray'] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            
+            # 3. Débruitage selon le mode
+            if mode == 'documents':
+                denoised = cv2.fastNlMeansDenoising(gray, h=10)
+                clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16,16))
+                canny_low, canny_high = 5, 20
+            elif mode == 'high_contrast':
+                denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                canny_low = max(30, sensitivity // 2)
+                canny_high = max(80, sensitivity * 2)
+            else:  # general
+                denoised = cv2.fastNlMeansDenoising(gray)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+                canny_low = max(10, sensitivity // 2)
+                canny_high = max(30, sensitivity)
+            
+            enhanced = clahe.apply(denoised)
+            debug_images['03_enhanced'] = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+            
+            # 4. Détection de bords
+            edges = cv2.Canny(enhanced, canny_low, canny_high)
+            debug_images['04_edges'] = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+            
+            # 5. Gradient morphologique
+            kernel_grad = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            gradient = cv2.morphologyEx(enhanced, cv2.MORPH_GRADIENT, kernel_grad)
+            _, gradient_thresh = cv2.threshold(gradient, sensitivity // 4, 255, cv2.THRESH_BINARY)
+            debug_images['05_gradient'] = cv2.cvtColor(gradient_thresh, cv2.COLOR_GRAY2BGR)
+            
+            # 6. Seuillage adaptatif
+            block_size = 15 if mode == 'documents' else 11
+            adaptive_thresh = cv2.adaptiveThreshold(
+                enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, block_size, 2
+            )
+            adaptive_thresh = cv2.bitwise_not(adaptive_thresh)
+            debug_images['06_adaptive'] = cv2.cvtColor(adaptive_thresh, cv2.COLOR_GRAY2BGR)
+            
+            # 7. Combiné
+            combined = cv2.bitwise_or(edges, gradient_thresh)
+            combined = cv2.bitwise_or(combined, adaptive_thresh)
+            debug_images['07_combined'] = cv2.cvtColor(combined, cv2.COLOR_GRAY2BGR)
+            
+            # 8. Après morphologie
+            if mode == 'documents':
+                kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+                morphed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+            else:
+                kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                morphed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close)
+            
+            debug_images['08_morphed'] = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
+            
+            # 9. Contours détectés
+            contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours_img = page_cv.copy()
+            cv2.drawContours(contours_img, contours, -1, (0, 255, 0), 2)
+            debug_images['09_contours'] = contours_img
+            
+            # 10. Rectangles finaux
+            rectangles = detector.detect_rectangles(
+                page_cv, 
+                sensitivity, 
+                mode,
+                adaptive_params=detection_params,
+                debug_page_num=page_number
+            )
+            
+            final_img = page_cv.copy()
+            for i, rect in enumerate(rectangles):
+                if 'corners' in rect:
+                    corners = rect['corners']
+                    if isinstance(corners, list):
+                        corners = np.array(corners, dtype=np.int32)
+                    cv2.polylines(final_img, [corners], True, (0, 0, 255), 3)
+                    
+                    # Numéroter les rectangles
+                    if len(corners) > 0:
+                        center_x = int(np.mean(corners[:, 0]))
+                        center_y = int(np.mean(corners[:, 1]))
+                        cv2.putText(final_img, str(i+1), (center_x, center_y), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+            
+            debug_images['10_final_rectangles'] = final_img
+            
+            # **SAUVEGARDER TOUTES LES IMAGES DANS UN ZIP**
+            zip_buffer = io.BytesIO()
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for img_name, img_data in debug_images.items():
+                    # Convertir en PNG
+                    _, buffer = cv2.imencode('.png', img_data)
+                    
+                    # Nom de fichier explicite
+                    zip_filename = f"{img_name}_{filename.replace('.pdf', '')}_page-{page_number:03d}.png"
+                    
+                    # Ajouter au ZIP
+                    zip_file.writestr(zip_filename, buffer.tobytes())
+                
+                # Ajouter un fichier de statistiques
+                stats_content = f"""DEBUG VISUEL - Page {page_number}
+===========================================
+
+PARAMÈTRES:
+- Fichier: {filename}
+- Page: {page_number}
+- Mode: {mode}
+- Sensibilité: {sensitivity}
+- DPI: {dpi}
+
+ANALYSE AUTOMATIQUE:
+- Format: {page_analysis['page_format']}
+- Taille: {page_analysis['width_mm']}×{page_analysis['height_mm']}mm
+- DPI recommandé: {page_analysis['recommended_dpi']}
+- Seuil aire: {detection_params['min_area']} pixels
+- Max rectangles: {detection_params['max_rectangles']}
+
+RÉSULTATS:
+- Contours bruts: {len(contours)}
+- Rectangles finaux: {len(rectangles)}
+
+IMAGES INCLUSES:
+01_original.png - Image originale
+02_gray.png - Conversion niveaux de gris
+03_enhanced.png - Amélioration contraste (CLAHE)
+04_edges.png - Détection de bords (Canny)
+05_gradient.png - Gradient morphologique
+06_adaptive.png - Seuillage adaptatif
+07_combined.png - Combinaison des techniques
+08_morphed.png - Après morphologie
+09_contours.png - Contours détectés (vert)
+10_final_rectangles.png - Rectangles finaux (rouge, numérotés)
+
+CONSEILS DEBUGGING:
+- Si 04_edges est très vide → Augmenter sensibilité ou changer mode
+- Si 09_contours a beaucoup de contours mais 10_final_rectangles est vide → Seuil trop strict
+- Si les contours ne suivent pas bien les formes → Essayer mode 'documents'
+"""
+                
+                zip_file.writestr(f"DEBUG_STATS_page-{page_number:03d}.txt", stats_content)
+            
+            zip_buffer.seek(0)
+            
+            logger.info(f"✅ Images de debug générées: {len(debug_images)} étapes")
+            
+            return send_file(
+                zip_buffer,
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=f'debug_visual_{filename.replace(".pdf", "")}_page-{page_number:03d}.zip'
+            )
+            
+        except Exception as e:
+            logger.error(f"Erreur debug visuel: {e}")
+            return jsonify({'error': f'Erreur traitement: {str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Erreur debug visuel: {str(e)}")
+        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
+@app.route('/debug_missing_rectangles/<filename>/<int:page_number>')
+def debug_missing_rectangles(filename, page_number):
+    """Endpoint spécialisé pour comprendre pourquoi des rectangles sont manqués"""
+    try:
+        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Fichier non trouvé'}), 404
+        
+        logger.info(f"🔍 DEBUG RECTANGLES MANQUÉS - Page {page_number}")
+        
+        # Test avec PLUSIEURS configurations
+        test_configs = [
+            {'mode': 'high_contrast', 'sensitivity': 30, 'dpi': 300},
+            {'mode': 'high_contrast', 'sensitivity': 50, 'dpi': 300},
+            {'mode': 'high_contrast', 'sensitivity': 70, 'dpi': 300},
+            {'mode': 'documents', 'sensitivity': 50, 'dpi': 300},
+            {'mode': 'general', 'sensitivity': 50, 'dpi': 300},
+            {'mode': 'high_contrast', 'sensitivity': 50, 'dpi': 400},
+            {'mode': 'high_contrast', 'sensitivity': 50, 'dpi': 200},
+        ]
+        
+        results = []
+        
+        for config in test_configs:
+            try:
+                logger.info(f"🧪 Test: Mode={config['mode']}, Sens={config['sensitivity']}, DPI={config['dpi']}")
+                
+                # Convertir la page
+                page_images = convert_from_path(
+                    filepath, 
+                    dpi=config['dpi'],
+                    first_page=page_number,
+                    last_page=page_number
+                )
+                
+                if not page_images:
+                    continue
+                    
+                page_image = page_images[0]
+                page_array = np.array(page_image)
+                page_cv = cv2.cvtColor(page_array, cv2.COLOR_RGB2BGR)
+                
+                # Analyser la page
+                page_analysis = page_analyzer.analyze_page_dimensions(filepath, page_number)
+                
+                # **OVERRIDE des paramètres pour forcer la détection**
+                custom_params = page_analysis['detection_params'].copy()
+                
+                # Réduire drastiquement le seuil d'aire pour capturer plus de rectangles
+                custom_params['min_area'] = custom_params['min_area'] // 4  # Diviser par 4
+                custom_params['max_rectangles'] = 20  # Permettre plus de rectangles
+                
+                logger.info(f"   Seuil aire réduit: {custom_params['min_area']} (était {page_analysis['detection_params']['min_area']})")
+                
+                # Détecter avec paramètres modifiés
+                start_time = time.time()
+                rectangles = detector.detect_rectangles(
+                    page_cv, 
+                    config['sensitivity'], 
+                    config['mode'],
+                    adaptive_params=custom_params,
+                    debug_page_num=page_number
+                )
+                processing_time = time.time() - start_time
+                
+                # Convertir pour JSON
+                for rect in rectangles:
+                    if 'corners' in rect and hasattr(rect['corners'], 'tolist'):
+                        rect['corners'] = rect['corners'].tolist()
+                    if 'bbox' in rect and isinstance(rect['bbox'], tuple):
+                        x, y, w, h = rect['bbox']
+                        rect['bbox'] = {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+                    if 'contour' in rect:
+                        del rect['contour']
+                    for key, value in rect.items():
+                        if hasattr(value, 'tolist'):
+                            rect[key] = value.tolist()
+                        elif hasattr(value, 'item'):
+                            rect[key] = value.item()
+                
+                result = {
+                    'config': config,
+                    'rectangles_found': len(rectangles),
+                    'rectangles': rectangles,
+                    'processing_time': processing_time,
+                    'seuil_reduit': custom_params['min_area'],
+                    'seuil_original': page_analysis['detection_params']['min_area'],
+                    'image_info': {
+                        'size': f"{page_cv.shape[1]}×{page_cv.shape[0]}",
+                        'megapixels': round((page_cv.shape[0] * page_cv.shape[1]) / 1000000, 1)
+                    }
+                }
+                
+                results.append(result)
+                logger.info(f"   ✅ Résultat: {len(rectangles)} rectangles trouvés")
+                
+            except Exception as e:
+                logger.error(f"   ❌ Erreur config {config}: {e}")
+                continue
+        
+        # Trier par nombre de rectangles trouvés (décroissant)
+        results.sort(key=lambda x: x['rectangles_found'], reverse=True)
+        
+        logger.info(f"📊 RÉSUMÉ TESTS:")
+        for i, result in enumerate(results[:3]):  # Top 3
+            config = result['config']
+            logger.info(f"   {i+1}. {result['rectangles_found']} rectangles → Mode={config['mode']}, Sens={config['sensitivity']}")
+        
+        return jsonify({
+            'success': True,
+            'page_number': page_number,
+            'filename': filename,
+            'total_configs_tested': len(results),
+            'best_result': results[0] if results else None,
+            'all_results': results,
+            'recommendations': {
+                'best_config': results[0]['config'] if results else None,
+                'max_rectangles_found': results[0]['rectangles_found'] if results else 0,
+                'problem_analysis': 'Seuil aire trop élevé' if results and results[0]['rectangles_found'] > 1 else 'Problème détection de bords'
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur debug rectangles manqués: {str(e)}")
+        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
+@app.route('/emergency_reprocess/<filename>')
+def emergency_reprocess_pdf(filename):
+    """Endpoint d'urgence pour retraiter un PDF avec paramètres optimisés"""
+    try:
+        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Fichier non trouvé'}), 404
+        
+        logger.info(f"🚨 RETRAITEMENT D'URGENCE - {filename}")
+        
+        # **PARAMÈTRES OPTIMISÉS BASÉS SUR LES TESTS**
+        # Utiliser les paramètres qui fonctionnent en debug
+        sensitivity = 30  # Plus sensible
+        mode = 'documents'  # Mode optimal pour Picasso
+        
+        # Compter les pages
+        try:
+            with open(filepath, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                total_pages = len(pdf_reader.pages)
+        except Exception as e:
+            total_pages = 196  # Valeur connue pour Picasso
+        
+        logger.info(f"🔄 Retraitement avec paramètres optimisés: mode={mode}, sensibilité={sensitivity}")
+        
+        # **NETTOYER LES DONNÉES PRÉCÉDENTES**
+        pdf_processor.clear()
+        pdf_processor.pages = []
+        pdf_processor.pdf_rectangles = []
+        pdf_processor.original_filename = filename.replace('.pdf', '').replace('.ocr', '')
+        
+        # **TRAITEMENT PAGE PAR PAGE AVEC PARAMÈTRES OPTIMISÉS**
+        total_rectangles = 0
+        pages_processed = 0
+        
+        for page_num in range(1, min(total_pages + 1, 50)):  # Limiter à 50 pages pour test
+            try:
+                logger.info(f"📄 Retraitement page {page_num}/{min(total_pages, 50)}...")
+                
+                # Analyser la page
+                page_analysis = page_analyzer.analyze_page_dimensions(filepath, page_num)
+                
+                # **FORCER PARAMÈTRES MOINS STRICTS**
+                custom_params = page_analysis['detection_params'].copy()
+                custom_params['min_area'] = custom_params['min_area'] // 3  # Diviser par 3 au lieu de 4
+                custom_params['max_rectangles'] = 15  # Plus de rectangles
+                
+                # Convertir la page avec DPI adaptatif
+                optimal_dpi = page_analysis['recommended_dpi']
+                page_images = convert_from_path(
+                    filepath, 
+                    dpi=optimal_dpi,
+                    first_page=page_num,
+                    last_page=page_num
+                )
+                
+                if not page_images:
+                    continue
+                    
+                page_image = page_images[0]
+                page_array = np.array(page_image)
+                page_cv = cv2.cvtColor(page_array, cv2.COLOR_RGB2BGR)
+                
+                # Stocker l'image
+                page_data = {
+                    'page_number': page_num,
+                    'image': page_cv
+                }
+                pdf_processor.pages.append(page_data)
+                
+                # Détecter avec paramètres optimisés
+                rectangles = detector.detect_rectangles(
+                    page_cv, 
+                    sensitivity, 
+                    mode,
+                    adaptive_params=custom_params,
+                    debug_page_num=page_num
+                )
+                
+                # Convertir pour JSON
+                for rect in rectangles:
+                    if 'corners' in rect and hasattr(rect['corners'], 'tolist'):
+                        rect['corners'] = rect['corners'].tolist()
+                    if 'bbox' in rect and isinstance(rect['bbox'], tuple):
+                        x, y, w, h = rect['bbox']
+                        rect['bbox'] = {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+                    if 'contour' in rect:
+                        del rect['contour']
+                    for key, value in rect.items():
+                        if hasattr(value, 'tolist'):
+                            rect[key] = value.tolist()
+                        elif hasattr(value, 'item'):
+                            rect[key] = value.item()
+                
+                # Stocker les résultats
+                page_result = {
+                    'page_number': page_num,
+                    'rectangles': rectangles,
+                    'rectangles_count': len(rectangles)
+                }
+                pdf_processor.pdf_rectangles.append(page_result)
+                
+                total_rectangles += len(rectangles)
+                pages_processed += 1
+                
+                logger.info(f"✅ Page {page_num}: {len(rectangles)} rectangles détectés")
+                
+                # Garder seulement les 5 dernières pages en mémoire
+                if len(pdf_processor.pages) > 5:
+                    pdf_processor.pages.pop(0)
+                
+            except Exception as e:
+                logger.error(f"❌ Erreur page {page_num}: {e}")
+                continue
+        
+        # **MISE À JOUR DES RÉSULTATS GLOBAUX**
+        pdf_processor.current_result = {
+            'success': True,
+            'total_pages': pages_processed,
+            'total_rectangles': total_rectangles,
+            'pages': pdf_processor.pdf_rectangles,
+            'filename': pdf_processor.original_filename,
+            'is_pdf': True,
+            'emergency_reprocess': True
+        }
+        pdf_processor.processing_in_progress = False
+        
+        logger.info(f"🎉 Retraitement terminé: {pages_processed} pages, {total_rectangles} rectangles")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Retraitement terminé avec paramètres optimisés',
+            'pages_processed': pages_processed,
+            'total_rectangles': total_rectangles,
+            'filename': filename,
+            'download_ready': total_rectangles > 0,
+            'optimizations_applied': {
+                'mode': mode,
+                'sensitivity': sensitivity,
+                'seuil_reduit': 'Divisé par 3',
+                'dpi': 'Adaptatif par page'
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur retraitement d'urgence: {str(e)}")
+        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
 # WebSocket events
 @socketio.on('connect')
 def handle_connect():
@@ -1928,6 +2739,161 @@ def handle_connect():
 def handle_disconnect():
     """Déconnexion WebSocket"""
     logger.info("❌ Client WebSocket déconnecté")
+
+class PDFPageAnalyzer:
+    """Analyseur intelligent de pages PDF pour adapter automatiquement les paramètres"""
+    
+    def __init__(self):
+        self.page_cache = {}  # Cache des analyses de pages
+    
+    def analyze_page_dimensions(self, pdf_path, page_number):
+        """
+        Analyse les dimensions physiques d'une page PDF spécifique
+        Retourne: {width_mm, height_mm, area_mm2, page_format, recommended_dpi}
+        """
+        cache_key = f"{pdf_path}_{page_number}"
+        if cache_key in self.page_cache:
+            return self.page_cache[cache_key]
+        
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                
+                if page_number > len(pdf_reader.pages):
+                    raise Exception(f"Page {page_number} n'existe pas")
+                
+                page = pdf_reader.pages[page_number - 1]  # PyPDF2 est 0-indexé
+                
+                # Récupérer les dimensions en points (1 point = 1/72 pouce)
+                mediabox = page.mediabox
+                width_points = float(mediabox.width)
+                height_points = float(mediabox.height)
+                
+                # Convertir en millimètres (1 pouce = 25.4 mm)
+                width_mm = width_points * 25.4 / 72
+                height_mm = height_points * 25.4 / 72
+                area_mm2 = width_mm * height_mm
+                
+                # Identifier le format de page
+                page_format = self._identify_page_format(width_mm, height_mm)
+                
+                # Recommander un DPI adapté
+                recommended_dpi = self._calculate_optimal_dpi(width_mm, height_mm, area_mm2)
+                
+                # Calculer les paramètres de détection optimaux
+                detection_params = self._calculate_detection_params(width_mm, height_mm, recommended_dpi)
+                
+                analysis = {
+                    'width_mm': round(width_mm, 1),
+                    'height_mm': round(height_mm, 1),
+                    'area_mm2': round(area_mm2, 0),
+                    'page_format': page_format,
+                    'recommended_dpi': recommended_dpi,
+                    'detection_params': detection_params
+                }
+                
+                # Mettre en cache
+                self.page_cache[cache_key] = analysis
+                
+                logger.info(f"📏 Page {page_number}: {width_mm:.1f}×{height_mm:.1f}mm ({page_format}) → DPI {recommended_dpi}")
+                
+                return analysis
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur analyse page {page_number}: {e}")
+            # Valeurs par défaut pour A4
+            return {
+                'width_mm': 210.0,
+                'height_mm': 297.0,
+                'area_mm2': 62370,
+                'page_format': 'A4 (par défaut)',
+                'recommended_dpi': 300,
+                'detection_params': self._calculate_detection_params(210, 297, 300)
+            }
+    
+    def _identify_page_format(self, width_mm, height_mm):
+        """Identifie le format de page basé sur les dimensions"""
+        # Normaliser pour orientation portrait
+        w, h = sorted([width_mm, height_mm])
+        
+        formats = {
+            (105, 148): "A6",
+            (148, 210): "A5", 
+            (210, 297): "A4",
+            (297, 420): "A3",
+            (420, 594): "A2",
+            (594, 841): "A1",
+            (216, 279): "Letter US",
+            (216, 356): "Legal US",
+            (432, 279): "Tabloid",
+        }
+        
+        # Trouver le format le plus proche (tolérance 5mm)
+        for (fw, fh), format_name in formats.items():
+            if abs(w - fw) <= 5 and abs(h - fh) <= 5:
+                return format_name
+        
+        # Format personnalisé
+        return f"Personnalisé {w:.0f}×{h:.0f}mm"
+    
+    def _calculate_optimal_dpi(self, width_mm, height_mm, area_mm2):
+        """Calcule le DPI optimal basé sur la taille de page"""
+        # Stratégie : maintenir une résolution cible d'environ 50-100 mégapixels max
+        target_megapixels = 75  # Objectif : 75 MP par page
+        
+        # Calculer le DPI pour atteindre la cible
+        width_inches = width_mm / 25.4
+        height_inches = height_mm / 25.4
+        
+        # DPI pour atteindre le target de mégapixels
+        optimal_dpi = int((target_megapixels * 1000000) ** 0.5 / max(width_inches, height_inches))
+        
+        # Contraintes intelligentes
+        if area_mm2 < 30000:  # Petite page (< A5)
+            dpi = min(600, max(optimal_dpi, 400))  # DPI élevé pour petites pages
+        elif area_mm2 < 70000:  # Page normale (A5-A4)
+            dpi = min(500, max(optimal_dpi, 300))  # DPI équilibré
+        elif area_mm2 < 150000:  # Grande page (A4-A3)
+            dpi = min(400, max(optimal_dpi, 200))  # DPI réduit pour grandes pages
+        else:  # Très grande page (> A3)
+            dpi = min(300, max(optimal_dpi, 150))  # DPI faible pour très grandes pages
+        
+        # S'assurer que c'est un multiple de 50 pour l'efficacité
+        dpi = round(dpi / 50) * 50
+        
+        return max(150, min(600, dpi))  # Entre 150 et 600 DPI
+    
+    def _calculate_detection_params(self, width_mm, height_mm, dpi):
+        """Calcule les paramètres de détection optimaux"""
+        # Calculer la résolution finale
+        width_pixels = int(width_mm * dpi / 25.4)
+        height_pixels = int(height_mm * dpi / 25.4)
+        total_pixels = width_pixels * height_pixels
+        
+        # Adapter les seuils selon la résolution réelle
+        if total_pixels > 80_000_000:  # > 80 MP
+            min_area_divisor = 800  # Seuil très strict
+            max_rectangles = 60
+        elif total_pixels > 50_000_000:  # 50-80 MP
+            min_area_divisor = 600  # Seuil strict
+            max_rectangles = 50
+        elif total_pixels > 20_000_000:  # 20-50 MP
+            min_area_divisor = 400  # Seuil équilibré
+            max_rectangles = 40
+        else:  # < 20 MP
+            min_area_divisor = 200  # Seuil permissif
+            max_rectangles = 30
+        
+        return {
+            'estimated_pixels': total_pixels,
+            'estimated_megapixels': round(total_pixels / 1_000_000, 1),
+            'min_area_divisor': min_area_divisor,
+            'max_rectangles': max_rectangles,
+            'min_area': total_pixels // min_area_divisor
+        }
+
+# Instanciation des analyseurs après définition des classes
+page_analyzer = PDFPageAnalyzer()
 
 if __name__ == '__main__':
     print("🚀 Démarrage du backend de détection de rectangles")
