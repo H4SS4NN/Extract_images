@@ -19,7 +19,6 @@ import pytesseract
 import requests
 import base64
 from io import BytesIO
-import pdfplumber
 
 # Configuration logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,10 +37,6 @@ class UltraSensitivePDFExtractor:
         self.ollama_url = "http://localhost:11434/api/generate"
         self.ollama_model = "llava"  # Modèle vision + texte
         self.ollama_enabled = self._check_ollama_availability()
-        
-        # Tester LLaVA si disponible
-        if self.ollama_enabled:
-            self._test_llava_capabilities()
     
     def _configure_tesseract(self):
         """Configure Tesseract OCR"""
@@ -62,163 +57,49 @@ class UltraSensitivePDFExtractor:
         return False
     
     def _check_ollama_availability(self):
-        """Vérifie si Ollama est disponible avec LLaVA"""
+        """Vérifie si Ollama est disponible"""
         try:
             response = requests.get("http://localhost:11434/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get('models', [])
                 model_names = [model['name'] for model in models]
-                
-                # Chercher LLaVA (peut être llava, llava:latest, llava:7b, etc.)
-                llava_models = [name for name in model_names if 'llava' in name.lower()]
-                
-                if llava_models:
-                    # Prendre le premier modèle LLaVA trouvé
-                    self.ollama_model = llava_models[0]
-                    logger.info(f"✅ Ollama disponible avec modèle LLaVA: {self.ollama_model}")
-                    logger.info("🔍 LLaVA peut analyser les images et détecter les numéros d'œuvres")
+                if any('llava' in name for name in model_names):
+                    logger.info("✅ Ollama disponible avec modèle LLaVA")
                     return True
                 else:
                     logger.warning("⚠️ Ollama disponible mais modèle LLaVA non trouvé")
-                    logger.warning("💡 Pour installer LLaVA: ollama pull llava")
                     return False
-        except Exception as e:
-            logger.warning(f"⚠️ Ollama non disponible: {e}")
-            logger.warning("💡 Pour installer Ollama: https://ollama.ai/")
+        except:
+            logger.warning("⚠️ Ollama non disponible - analyse IA désactivée")
             return False
     
     def _query_ollama_vision(self, image, prompt):
-        """Interroge le modèle LLaVA avec une image"""
+        """Interroge le modèle Ollama avec une image"""
         if not self.ollama_enabled:
             return None
         
         try:
-            # Redimensionner l'image si elle est trop grande (LLaVA a des limites)
-            height, width = image.shape[:2]
-            max_size = 1024
-            
-            if max(height, width) > max_size:
-                scale = max_size / max(height, width)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                logger.debug(f"    🔍 Image redimensionnée pour LLaVA: {width}×{height} → {new_width}×{new_height}")
-            
             # Convertir l'image en base64
-            _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _, buffer = cv2.imencode('.jpg', image)
             image_base64 = base64.b64encode(buffer).decode('utf-8')
             
             payload = {
                 "model": self.ollama_model,
                 "prompt": prompt,
                 "images": [image_base64],
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,  # Plus déterministe pour l'analyse
-                    "top_p": 0.9,
-                    "max_tokens": 300,  # Réduit pour éviter les timeouts
-                    "num_ctx": 2048,    # Contexte réduit
-                    "num_predict": 200  # Limite de tokens
-                }
+                "stream": False
             }
             
-            logger.debug(f"    🤖 Envoi requête LLaVA: {prompt[:100]}...")
-            # Timeout plus long pour LLaVA mais avec retry
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
-            
-            if response.status_code == 200:
-                result = response.json()
-                response_text = result.get('response', '').strip()
-                logger.debug(f"    🤖 Réponse LLaVA: {response_text}")
-                return response_text
-            else:
-                logger.error(f"    ❌ Erreur Ollama {response.status_code}: {response.text}")
-                return None
-                
-        except requests.exceptions.Timeout:
-            logger.warning("    ⚠️ Timeout LLaVA - essai avec prompt simplifié...")
-            # Essayer avec un prompt plus simple
-            return self._query_ollama_simple(image, prompt)
-        except Exception as e:
-            logger.error(f"    ❌ Erreur requête Ollama: {e}")
-            return None
-    
-    def _query_ollama_simple(self, image, original_prompt):
-        """Version simplifiée pour éviter les timeouts"""
-        try:
-            # Redimensionner encore plus pour aller plus vite
-            height, width = image.shape[:2]
-            max_size = 512  # Plus petit
-            
-            if max(height, width) > max_size:
-                scale = max_size / max(height, width)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
-            
-            # Convertir l'image en base64
-            _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            image_base64 = base64.b64encode(buffer).decode('utf-8')
-            
-            # Prompt très simple
-            simple_prompt = "Liste tous les numéros visibles dans cette image. Réponds juste les numéros séparés par des virgules."
-            
-            payload = {
-                "model": self.ollama_model,
-                "prompt": simple_prompt,
-                "images": [image_base64],
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "max_tokens": 100,  # Très court
-                    "num_ctx": 1024,   # Contexte minimal
-                    "num_predict": 50  # Très limité
-                }
-            }
-            
-            logger.debug(f"    🤖 Envoi requête LLaVA simplifiée...")
             response = requests.post(self.ollama_url, json=payload, timeout=30)
-            
             if response.status_code == 200:
                 result = response.json()
-                response_text = result.get('response', '').strip()
-                logger.debug(f"    🤖 Réponse LLaVA simplifiée: {response_text}")
-                return response_text
+                return result.get('response', '').strip()
             else:
-                logger.error(f"    ❌ Erreur LLaVA simplifiée: {response.status_code}")
+                logger.error(f"Erreur Ollama: {response.status_code}")
                 return None
-                
         except Exception as e:
-            logger.error(f"    ❌ Erreur LLaVA simplifiée: {e}")
+            logger.error(f"Erreur requête Ollama: {e}")
             return None
-    
-    def _test_llava_capabilities(self):
-        """Teste les capacités de LLaVA avec une image simple"""
-        try:
-            # Créer une image de test simple
-            test_image = np.ones((200, 400, 3), dtype=np.uint8) * 255  # Image blanche
-            cv2.putText(test_image, "Test 123", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 3)
-            
-            prompt = "Peux-tu voir le texte 'Test 123' dans cette image ? Réponds simplement OUI ou NON."
-            
-            logger.info("🧪 Test des capacités LLaVA...")
-            response = self._query_ollama_vision(test_image, prompt)
-            
-            if response and 'OUI' in response.upper():
-                logger.info("✅ LLaVA fonctionne correctement - vision activée")
-            elif response and 'NON' in response.upper():
-                logger.warning("⚠️ LLaVA répond mais ne voit pas le texte - problème de vision")
-            elif response:
-                logger.warning(f"⚠️ LLaVA répond mais de manière inattendue: {response}")
-            else:
-                logger.warning("⚠️ LLaVA ne répond pas - peut être trop lent")
-                logger.info("💡 LLaVA sera désactivé pour cette session")
-                self.ollama_enabled = False
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Test LLaVA échoué: {e}")
-            logger.info("💡 LLaVA sera désactivé pour cette session")
-            self.ollama_enabled = False
     
     def create_session_folder(self, pdf_name):
         """Crée le dossier de session principal"""
@@ -380,10 +261,6 @@ class UltraSensitivePDFExtractor:
             page_image_path = os.path.join(page_dir, "page_full_image.jpg")
             cv2.imwrite(page_image_path, page_cv)
             logger.debug(f"  💾 Image de page sauvegardée: {page_image_path}")
-            
-            # NOUVEAU : Extraire tous les numéros de la page d'un coup (plus efficace)
-            logger.info(f"  🔢 Extraction des numéros de la page {page_num}...")
-            numbers_map = self.extract_all_page_numbers(pdf_path, page_num)
             
             # **MÉTHODE ULTRA : TESTER TOUTES LES CONFIGURATIONS POSSIBLES**
             all_rectangles = []
@@ -551,7 +428,7 @@ class UltraSensitivePDFExtractor:
                     )
                     
                     # Détecter numéro d'œuvre (rotation désactivée)
-                    artwork_number = self.detect_artwork_number(page_cv, rectangle, pdf_path, page_num, numbers_map)
+                    artwork_number = self.detect_artwork_number(page_cv, rectangle)
                     
                     # Déterminer le nom et le dossier
                     if artwork_number:
@@ -641,18 +518,29 @@ class UltraSensitivePDFExtractor:
                     logger.error(f"    ❌ Erreur sauvegarde {rect_idx + 1}: {e}")
                     continue
             
-            # Afficher les numéros détectés (sans correction automatique)
-            detected_numbers = []
-            for rect in page_result.get('rectangles_details', []):
-                artwork_number = rect.get('artwork_number')
-                if artwork_number and artwork_number.isdigit():
-                    detected_numbers.append(int(artwork_number))
+            # NOUVEAU : Analyser la cohérence des numéros
+            logger.info(f"  🔍 Analyse de cohérence des numéros...")
+            page_result = self.analyze_number_coherence(page_result)
             
-            if detected_numbers:
-                detected_numbers.sort()
-                logger.info(f"  🔢 Numéros détectés: {detected_numbers}")
-            else:
-                logger.info(f"  🔢 Aucun numéro d'œuvre détecté sur cette page")
+            # Afficher les résultats de cohérence
+            coherence = page_result.get('coherence_analysis', {})
+            if coherence:
+                detected = coherence.get('detected_numbers', [])
+                is_seq = coherence.get('is_sequential', True)
+                gaps = coherence.get('gaps', [])
+                
+                if is_seq:
+                    logger.info(f"  ✅ Numéros cohérents: {detected}")
+                else:
+                    logger.warning(f"  ⚠️ Incohérences détectées: {detected}")
+                    if gaps:
+                        logger.warning(f"  🔍 Numéros manquants: {gaps}")
+                    
+                    # Afficher les suggestions Ollama
+                    suggestions = coherence.get('suggested_corrections', [])
+                    for suggestion in suggestions:
+                        if suggestion['found_by_ollama']:
+                            logger.info(f"  🤖 Ollama suggère: numéro {suggestion['missing_number']} à {suggestion['position_hint']}")
             
             page_result['success'] = True
             
@@ -1377,22 +1265,17 @@ class UltraSensitivePDFExtractor:
         # La rotation n'affecte que l'image extraite, pas sa position sur la page
         return rectangle
     
-    def detect_artwork_number(self, image, rectangle, pdf_path=None, page_num=None, numbers_map=None):
-        """Détecte le numéro d'œuvre sous l'image (méthode optimisée).
-        - Utilise d'abord l'OCR existant du PDF si disponible
-        - Sinon, cherche UNIQUEMENT sous le rectangle (zone prioritaire)
-        - OCR simple avec un seul prétraitement
-        - Retourne une chaîne du numéro ou None.
+    def detect_artwork_number(self, image, rectangle):
+        """Détecte le numéro d'œuvre sous/près du visuel.
+        Heuristiques:
+        - Cherche UNIQUEMENT SOUS le rectangle (zone prioritaire)
+        - Plusieurs prétraitements (OTSU, adaptatif, inversion, morpho)
+        - OCR Tesseract avec différents PSM
+        - Extraction par regex des nombres 1-3 chiffres en priorité
+        - 4 chiffres acceptés si précédés de mots-clés (fig, n°, no, plate, pl)
+        Retourne une chaîne du numéro ou None.
         """
         try:
-            # 1. ESSAYER D'ABORD L'OCR EXISTANT DU PDF (méthode optimisée)
-            if pdf_path and page_num and numbers_map is not None:
-                # Utiliser la map des numéros déjà extraite
-                nearest_number = self.find_nearest_number(rectangle, numbers_map)
-                if nearest_number:
-                    return nearest_number
-            
-            # 2. FALLBACK : OCR sur l'image
             # Vérifier Tesseract
             if not hasattr(pytesseract.pytesseract, 'tesseract_cmd'):
                 return None
@@ -1401,203 +1284,285 @@ class UltraSensitivePDFExtractor:
             bbox = rectangle.get('bbox', {})
             x, y, w, h = bbox.get('x', 0), bbox.get('y', 0), bbox.get('w', 0), bbox.get('h', 0)
 
-            # ZONES DE RECHERCHE ÉLARGIES : Sous, droite, gauche
-            pad_x = max(20, w // 10)
-            pad_y = max(20, h // 10)
-            
-            search_zones = [
-                # Zone 1: Sous l'image (priorité maximale)
-                {
-                    'name': 'sous',
-                    'x': max(0, x - pad_x),
-                    'y': min(H - 1, y + h + 2),
-                    'w': min(W - max(0, x - pad_x), w + 2 * pad_x),
-                    'h': min(80, H - min(H - 1, y + h + 2)),
-                    'weight': 3.0
-                },
-                # Zone 2: À droite de l'image
-                {
-                    'name': 'droite',
-                    'x': min(W - 1, x + w + 2),
-                    'y': max(0, y - pad_y),
-                    'w': min(100, W - min(W - 1, x + w + 2)),
-                    'h': min(h + 2 * pad_y, H - max(0, y - pad_y)),
-                    'weight': 2.0
-                },
-                # Zone 3: À gauche de l'image
-                {
-                    'name': 'gauche',
-                    'x': max(0, x - 100),
-                    'y': max(0, y - pad_y),
-                    'w': min(100, x),
-                    'h': min(h + 2 * pad_y, H - max(0, y - pad_y)),
-                    'weight': 1.5
-                }
+            # Définir zones de recherche (clamp aux bords)
+            def clamp_zone(zx, zy, zw, zh):
+                zx = max(0, zx); zy = max(0, zy)
+                zw = max(0, min(zw, W - zx))
+                zh = max(0, min(zh, H - zy))
+                return (zx, zy, zw, zh)
+
+            # NOUVEAU : Zones plus précises et limitées
+            pad_x = max(10, w // 20)  # Padding réduit
+            pad_y = max(10, h // 20)
+
+            zones = [
+                # PRIORITÉ 1: Sous le rectangle (zone prioritaire)
+                clamp_zone(x - pad_x, y + h + 2, w + 2 * pad_x, max(30, min(80, h // 3))),
+                # PRIORITÉ 2: Zone élargie sous (si la première ne trouve rien)
+                clamp_zone(x - pad_x*2, y + h + 2, w + 4 * pad_x, max(40, min(100, h // 2))),
+                # PRIORITÉ 3: À droite (pour images seules sur page)
+                clamp_zone(x + w + 4, y, min(80 + w // 3, W - (x + w + 4)), min(h, 120)),
+                # PRIORITÉ 4: À gauche (pour images seules sur page)
+                clamp_zone(max(0, x - (60 + w // 3)), y, min(80 + w // 3, x), min(h, 120)),
             ]
-            
-            best_number = None
-            best_score = 0
-            
-            for zone in search_zones:
-                if zone['w'] <= 5 or zone['h'] <= 5:
+
+            # Prétraitements à tester
+            def prepro(gray):
+                outs = []
+                # OTSU
+                _, b1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                outs.append(b1)
+                # OTSU inversé
+                _, b2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                outs.append(b2)
+                # Adaptatif
+                b3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 9)
+                outs.append(b3)
+                # CLAHE puis OTSU
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                g2 = clahe.apply(gray)
+                _, b4 = cv2.threshold(g2, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                outs.append(b4)
+                return outs
+
+            # OCR configs
+            ocr_confs = [
+                '--psm 7 -c tessedit_char_whitelist=0123456789NnOo°figFIGPlpl.:',
+                '--psm 6 -c tessedit_char_whitelist=0123456789NnOo°figFIGPlpl.:',
+                '--psm 8 -c tessedit_char_whitelist=0123456789',
+            ]
+
+            def extract_numbers(text):
+                text_norm = text.replace('\n', ' ').strip()
+                # Capturer patterns avec mots-clés
+                candidates = []
+                for m in re.finditer(r'(fig\.?|n[o°]?\.?|no\.?|n°|plate\.?|pl\.?|cat\.?|inv\.?|num\.?|numéro\.?)[\s:]*\(?([0-9]{1,4})\)?', text_norm, flags=re.IGNORECASE):
+                    word, num = m.group(1), m.group(2)
+                    weight = 2.0  # mot-clé présent ⇒ confiance plus élevée
+                    candidates.append((num, weight))
+                # Capturer nombres isolés
+                for m in re.finditer(r'\b([0-9]{1,4})\b', text_norm):
+                    num = m.group(1)
+                    # éviter années probables si 4 chiffres > 1899
+                    if len(num) == 4 and int(num) > 1899:
+                        continue
+                    candidates.append((num, 1.0))
+                return candidates
+
+            best = (None, 0.0)
+            # Parcourir les zones (priorité stricte)
+            for zone_idx, (sx, sy, sw, sh) in enumerate(zones):
+                if sw <= 5 or sh <= 5:
                     continue
-                
-                # Extraire la zone
-                roi = image[zone['y']:zone['y']+zone['h'], zone['x']:zone['x']+zone['w']]
+                roi = image[sy:sy+sh, sx:sx+sw]
                 gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                 
-                # PRÉTRAITEMENT SIMPLE : OTSU uniquement
-                _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                # Debug: sauvegarder la zone pour inspection
+                # cv2.imwrite(f"debug_zone_{zone_idx}.png", roi)
                 
-                # Agrandir pour améliorer OCR
-                binary = cv2.resize(binary, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
-                
-                # OCR SIMPLE : Une seule configuration
-                try:
-                    text = pytesseract.image_to_string(binary, config='--psm 8 -c tessedit_char_whitelist=0123456789')
-                except Exception:
-                    continue
-                
-                # EXTRACTION SIMPLE : Nombres 1-3 chiffres uniquement
-                numbers = re.findall(r'\b([0-9]{1,3})\b', text.strip())
-                
-                if numbers:
-                    # Prendre le premier nombre trouvé
-                    number = numbers[0]
-                    score = zone['weight']
-                    
-                    logger.debug(f"      🔍 Zone {zone['name']}: '{text.strip()}' → num '{number}' (score: {score})")
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_number = number
-                        logger.info(f"      🎯 Nouveau meilleur: {number} (zone {zone['name']}, score: {score})")
-            
-            if best_number:
-                logger.info(f"      ✅ Numéro final détecté: {best_number}")
-                return best_number
-            else:
-                logger.debug(f"      ❌ Aucun numéro détecté dans toutes les zones")
-                return None
-                
-        except Exception as e:
-            logger.debug(f"      ❌ Erreur détection numéro: {e}")
-            return None
-    
-    def extract_all_page_numbers(self, pdf_path, page_num):
-        """Extrait tous les numéros de la page avec leurs positions"""
-        try:
-            logger.debug(f"      📄 Extraction de tous les numéros de la page {page_num}")
-            
-            numbers_map = {}
-            
-            with pdfplumber.open(pdf_path) as pdf:
-                if page_num <= len(pdf.pages):
-                    page = pdf.pages[page_num - 1]
-                    words = page.extract_words()
-                    
-                    for word in words:
-                        if word['text'].isdigit() and 1 <= len(word['text']) <= 3:
-                            # Stocker avec position
-                            numbers_map[(word['x0'], word['top'])] = word['text']
-                            logger.debug(f"      🔢 Numéro détecté: {word['text']} à ({word['x0']:.1f}, {word['top']:.1f})")
-            
-            logger.info(f"      📊 Total numéros trouvés sur la page: {len(numbers_map)}")
-            return numbers_map
-            
-        except Exception as e:
-            logger.error(f"      ❌ Erreur extraction numéros: {e}")
-            return {}
-    
-    def find_nearest_number(self, rectangle, numbers_map):
-        """Trouve le numéro le plus proche du rectangle"""
-        bbox = rectangle['bbox']
-        rect_center_x = bbox['x'] + bbox['w']/2
-        rect_bottom_y = bbox['y'] + bbox['h']
-        
-        best_number = None
-        best_distance = float('inf')
-        
-        for (num_x, num_y), number in numbers_map.items():
-            # Distance pondérée (privilégier sous l'image)
-            # Le numéro doit être sous l'image (num_y > rect_bottom_y)
-            if num_y > rect_bottom_y:
-                distance = abs(rect_center_x - num_x) + 2 * (num_y - rect_bottom_y)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_number = number
-                    logger.debug(f"      🎯 Meilleur candidat: {number} à ({num_x:.1f}, {num_y:.1f}) - distance: {distance:.1f}")
-        
-        if best_number:
-            logger.info(f"      ✅ Numéro associé: {best_number} (distance: {best_distance:.1f})")
-        else:
-            logger.debug(f"      ❌ Aucun numéro trouvé sous ce rectangle")
-        
-        return best_number
-
-    def _try_use_existing_ocr(self, pdf_path, page_num, rectangle):
-        """Utilise l'OCR déjà présent dans le PDF avec pdfplumber"""
-        try:
-            logger.debug(f"      📄 Extraction OCR existant du PDF: {os.path.basename(pdf_path)}")
-            
-            with pdfplumber.open(pdf_path) as pdf:
-                if page_num <= len(pdf.pages):
-                    page = pdf.pages[page_num - 1]
-                    
-                    # Récupérer le texte avec les coordonnées
-                    words = page.extract_words()
-                    
-                    # Chercher les numéros près du rectangle
-                    bbox = rectangle.get('bbox', {})
-                    x, y, w, h = bbox.get('x', 0), bbox.get('y', 0), bbox.get('w', 0), bbox.get('h', 0)
-                    
-                    # Coordonnées du centre et bas du rectangle
-                    rect_center_x = x + w / 2
-                    rect_bottom_y = y + h
-                    
-                    best_number = None
-                    best_distance = float('inf')
-                    
-                    for word in words:
-                        # Si c'est un nombre de 1-3 chiffres
-                        if word['text'].isdigit() and 1 <= len(word['text']) <= 3:
-                            word_x = word['x0']
-                            word_y = word['top']
+                for b in prepro(gray):
+                    # agrandir pour OCR
+                    big = cv2.resize(b, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+                    for conf in ocr_confs:
+                        try:
+                            text = pytesseract.image_to_string(big, config=conf)
+                        except Exception:
+                            continue
+                        for num, wscore in extract_numbers(text):
+                            # NOUVEAU : Scoring hiérarchique par zone
+                            if zone_idx == 0:  # Sous l'image (priorité maximale)
+                                proximity = 3.0
+                                zone_bonus = 2.0
+                            elif zone_idx == 1:  # Zone élargie sous
+                                proximity = 2.0
+                                zone_bonus = 1.5
+                            elif zone_idx == 2:  # À droite
+                                proximity = 1.5
+                                zone_bonus = 1.2
+                            else:  # À gauche
+                                proximity = 1.5
+                                zone_bonus = 1.2
                             
-                            # Distance pondérée (privilégier sous l'image)
-                            # Le numéro doit être sous l'image (word_y > rect_bottom_y)
-                            if word_y > rect_bottom_y:
-                                # Distance horizontale + 2x distance verticale (privilégier la proximité verticale)
-                                distance = abs(word_x - rect_center_x) + 2 * (word_y - rect_bottom_y)
-                                
-                                if distance < best_distance:
-                                    best_distance = distance
-                                    best_number = word['text']
-                                    logger.debug(f"      🔍 Numéro candidat: {word['text']} à ({word_x:.1f}, {word_y:.1f}) - distance: {distance:.1f}")
-                    
-                    if best_number:
-                        logger.info(f"      📄 Numéro trouvé via OCR existant: {best_number} (distance: {best_distance:.1f})")
-                        return best_number
-                    else:
-                        logger.debug(f"      ❌ Aucun numéro trouvé sous le rectangle dans l'OCR existant")
-                        
+                            length_bonus = 1.0 if 1 <= len(num) <= 3 else 0.5
+                            
+                            # Vérifier que le numéro est dans une zone raisonnable
+                            center_x = sx + sw // 2
+                            rect_center_x = x + w // 2
+                            horizontal_distance = abs(center_x - rect_center_x)
+                            
+                            # Si trop loin horizontalement, pénaliser (sauf pour zones latérales)
+                            if zone_idx < 2 and horizontal_distance > w * 0.8:
+                                continue
+                            
+                            score = wscore * proximity * length_bonus * zone_bonus
+                            
+                            # Debug
+                            zone_names = ["SOUS", "SOUS_ELARGI", "DROITE", "GAUCHE"]
+                            logger.debug(f"      🔍 Zone {zone_names[zone_idx]}: '{text.strip()}' → num '{num}' (score: {score:.2f})")
+                            
+                            if score > best[1]:
+                                best = (num, score)
+                                logger.debug(f"      ✅ Nouveau meilleur: {num} (score: {score:.2f})")
+
+                # Si on a un très bon score dans les zones prioritaires (sous), arrêter
+                if best[0] and best[1] >= 4.0 and zone_idx <= 1:
+                    logger.debug(f"      🎯 Score excellent trouvé dans zone {zone_idx}, arrêt de la recherche")
+                    break
+
+            if best[0]:
+                logger.info(f"      🎯 Numéro détecté: {best[0]} (confiance: {best[1]:.2f})")
+            else:
+                logger.debug(f"      ❌ Aucun numéro détecté pour ce rectangle")
+
+            return best[0]
+        except Exception:
             return None
-        except Exception as e:
-            logger.debug(f"      ❌ Erreur extraction OCR existant: {e}")
-            return None
     
-    # Méthode supprimée - plus de correction automatique des numéros
+    def analyze_number_coherence(self, page_result):
+        """Analyse la cohérence des numéros d'œuvres sur une page"""
+        rectangles_details = page_result.get('rectangles_details', [])
+        
+        # Extraire les numéros détectés avec leurs positions
+        detected_numbers = []
+        for rect in rectangles_details:
+            artwork_number = rect.get('artwork_number')
+            if artwork_number and artwork_number.isdigit():
+                bbox = rect.get('bbox', {})
+                detected_numbers.append({
+                    'number': int(artwork_number),
+                    'x': bbox.get('x', 0),
+                    'y': bbox.get('y', 0),
+                    'w': bbox.get('w', 0),
+                    'h': bbox.get('h', 0),
+                    'filename': rect.get('filename', ''),
+                    'confidence': rect.get('confidence', 0)
+                })
+        
+        if len(detected_numbers) < 2:
+            return page_result  # Pas assez de numéros pour analyser
+        
+        # Trier par position (gauche à droite, haut en bas)
+        detected_numbers.sort(key=lambda x: (x['y'], x['x']))
+        
+        # Analyser la cohérence
+        numbers = [item['number'] for item in detected_numbers]
+        coherence_analysis = {
+            'detected_numbers': numbers,
+            'is_sequential': self._is_sequential(numbers),
+            'gaps': self._find_gaps(numbers),
+            'inconsistencies': [],
+            'suggested_corrections': []
+        }
+        
+        # Détecter les incohérences
+        if not coherence_analysis['is_sequential']:
+            coherence_analysis['inconsistencies'] = self._find_inconsistencies(detected_numbers)
+            
+            # Utiliser Ollama pour corriger les numéros manquants
+            if self.ollama_enabled and coherence_analysis['gaps']:
+                coherence_analysis['suggested_corrections'] = self._suggest_corrections_with_ollama(
+                    page_result, detected_numbers, coherence_analysis['gaps']
+                )
+        
+        page_result['coherence_analysis'] = coherence_analysis
+        return page_result
     
-    # Méthode supprimée - plus de correction automatique
+    def _is_sequential(self, numbers):
+        """Vérifie si les numéros sont séquentiels"""
+        if len(numbers) < 2:
+            return True
+        
+        sorted_numbers = sorted(numbers)
+        for i in range(1, len(sorted_numbers)):
+            if sorted_numbers[i] - sorted_numbers[i-1] != 1:
+                return False
+        return True
     
-    # Méthode supprimée - plus de correction automatique
+    def _find_gaps(self, numbers):
+        """Trouve les gaps dans la séquence de numéros"""
+        if len(numbers) < 2:
+            return []
+        
+        sorted_numbers = sorted(numbers)
+        gaps = []
+        
+        for i in range(1, len(sorted_numbers)):
+            diff = sorted_numbers[i] - sorted_numbers[i-1]
+            if diff > 1:
+                # Il y a un gap
+                for missing in range(sorted_numbers[i-1] + 1, sorted_numbers[i]):
+                    gaps.append(missing)
+        
+        return gaps
     
-    # Méthode supprimée - plus de correction automatique
+    def _find_inconsistencies(self, detected_numbers):
+        """Trouve les incohérences dans les numéros détectés"""
+        inconsistencies = []
+        
+        # Vérifier les numéros dupliqués
+        numbers = [item['number'] for item in detected_numbers]
+        duplicates = [num for num in set(numbers) if numbers.count(num) > 1]
+        
+        for dup in duplicates:
+            inconsistencies.append({
+                'type': 'duplicate',
+                'number': dup,
+                'count': numbers.count(dup)
+            })
+        
+        # Vérifier les numéros très éloignés
+        if len(numbers) > 1:
+            sorted_numbers = sorted(numbers)
+            for i in range(1, len(sorted_numbers)):
+                diff = sorted_numbers[i] - sorted_numbers[i-1]
+                if diff > 10:  # Gap de plus de 10 numéros
+                    inconsistencies.append({
+                        'type': 'large_gap',
+                        'gap_start': sorted_numbers[i-1],
+                        'gap_end': sorted_numbers[i],
+                        'gap_size': diff
+                    })
+        
+        return inconsistencies
     
-    # Méthode supprimée - plus de correction automatique
-    
-    # Méthode supprimée - plus de correction automatique
+    def _suggest_corrections_with_ollama(self, page_result, detected_numbers, gaps):
+        """Utilise Ollama pour suggérer des corrections"""
+        suggestions = []
+        
+        # Créer une image de la page complète pour l'analyse
+        page_image = self._get_page_image_for_analysis(page_result)
+        if page_image is None:
+            return suggestions
+        
+        # Pour chaque gap, demander à Ollama de chercher le numéro manquant
+        for missing_number in gaps:
+            prompt = f"""Analyse cette image de page de catalogue d'art. Je cherche le numéro d'œuvre {missing_number}. 
+            Les autres numéros visibles sont: {[item['number'] for item in detected_numbers]}.
+            Peux-tu me dire si tu vois le numéro {missing_number} quelque part sur cette page ? 
+            Si oui, indique-moi sa position approximative (haut, milieu, bas, gauche, droite, centre).
+            Réponds simplement par 'OUI' suivi de la position, ou 'NON' si tu ne le vois pas."""
+            
+            response = self._query_ollama_vision(page_image, prompt)
+            
+            if response and 'OUI' in response.upper():
+                # Extraire la position
+                position = response.replace('OUI', '').strip()
+                suggestions.append({
+                    'missing_number': missing_number,
+                    'found_by_ollama': True,
+                    'position_hint': position,
+                    'confidence': 'medium'
+                })
+                logger.info(f"🤖 Ollama a trouvé le numéro {missing_number} à la position: {position}")
+            else:
+                suggestions.append({
+                    'missing_number': missing_number,
+                    'found_by_ollama': False,
+                    'position_hint': None,
+                    'confidence': 'low'
+                })
+        
+        return suggestions
     
     def _get_page_image_for_analysis(self, page_result):
         """Récupère l'image de la page pour l'analyse Ollama"""
@@ -1617,8 +1582,6 @@ class UltraSensitivePDFExtractor:
             return page_image
         except:
             return None
-    
-    # Toutes les méthodes de correction automatique supprimées
     
     def create_thumbnail(self, image, max_size=200):
         """Crée une miniature"""
@@ -1662,22 +1625,39 @@ ANALYSE DE PAGE:
 - Taille image: {page_result.get('image_size', 'N/A')}
 - Mégapixels: {page_result.get('image_megapixels', 0)}MP
 
-NUMÉROS D'ŒUVRES DÉTECTÉS:
+ANALYSE DE COHÉRENCE DES NUMÉROS:
 """
         
-        # Afficher les numéros détectés (sans correction)
-        detected_numbers = []
-        for rect in page_result.get('rectangles_details', []):
-            artwork_number = rect.get('artwork_number')
-            if artwork_number and artwork_number.isdigit():
-                detected_numbers.append(int(artwork_number))
-        
-        if detected_numbers:
-            detected_numbers.sort()
-            content += f"- Numéros détectés: {detected_numbers}\n"
-            content += f"- Total: {len(detected_numbers)} numéros d'œuvres\n"
+        # Ajouter l'analyse de cohérence
+        coherence = page_result.get('coherence_analysis', {})
+        if coherence:
+            detected = coherence.get('detected_numbers', [])
+            is_seq = coherence.get('is_sequential', True)
+            gaps = coherence.get('gaps', [])
+            inconsistencies = coherence.get('inconsistencies', [])
+            suggestions = coherence.get('suggested_corrections', [])
+            
+            content += f"- Numéros détectés: {detected}\n"
+            content += f"- Séquentiel: {'✅ Oui' if is_seq else '❌ Non'}\n"
+            
+            if gaps:
+                content += f"- Numéros manquants: {gaps}\n"
+            
+            if inconsistencies:
+                content += f"- Incohérences: {len(inconsistencies)} détectées\n"
+                for inc in inconsistencies:
+                    if inc['type'] == 'duplicate':
+                        content += f"  • Numéro {inc['number']} dupliqué ({inc['count']} fois)\n"
+                    elif inc['type'] == 'large_gap':
+                        content += f"  • Gap important: {inc['gap_start']} → {inc['gap_end']} (diff: {inc['gap_size']})\n"
+            
+            if suggestions:
+                content += f"- Suggestions Ollama: {len(suggestions)} corrections proposées\n"
+                for sugg in suggestions:
+                    if sugg['found_by_ollama']:
+                        content += f"  • Numéro {sugg['missing_number']} trouvé à {sugg['position_hint']}\n"
         else:
-            content += "- Aucun numéro d'œuvre détecté sur cette page\n"
+            content += "- Pas assez de numéros pour analyser la cohérence\n"
 
         content += f"""
 IMAGES EXTRAITES:
@@ -1718,7 +1698,8 @@ MÉTHODES UTILISÉES:
 ✅ DPI élevé pour plus de précision
 ✅ Fusion intelligente des résultats
 ✅ Déduplication avancée par centre et taille
-✅ Détection des numéros d'œuvres (sans correction automatique)
+✅ Analyse de cohérence des numéros d'œuvres
+✅ Intégration Ollama pour correction automatique
 
 FICHIERS DANS CE DOSSIER:
 - README_ULTRA.txt (ce fichier)
@@ -1786,7 +1767,8 @@ TECHNOLOGIES ULTRA UTILISÉES:
 🔍 DPI élevé (400+ par page)
 🧠 Fusion intelligente des résultats
 🚫 Déduplication avancée par centre et taille
-🔍 Détection des numéros d'œuvres (sans correction automatique)
+🔍 Analyse de cohérence des numéros d'œuvres
+🤖 Intégration Ollama pour correction automatique
 
 ORGANISATION DES FICHIERS:
 - Dossier principal: {os.path.basename(self.session_dir)}
@@ -1839,7 +1821,8 @@ def main():
     print("🔬 8+ algorithmes par page, fusion intelligente")
     print("☁️ Spécialisé pour fonds clairs et balance des blancs")
     print("🎨 Détection par saturation et contours doux")
-    print("🔍 Détection des numéros d'œuvres (sans correction automatique)")
+    print("🔍 Analyse de cohérence des numéros d'œuvres")
+    print("🤖 Intégration Ollama pour correction automatique")
     print("=" * 60)
     
     # Demander le fichier PDF
@@ -1869,7 +1852,8 @@ def main():
     print("⚡ Chaque page testée avec 8+ méthodes différentes")
     print("🔬 Seuils ultra-permissifs, DPI élevé")
     print("☁️ Optimisé pour fonds clairs et balance des blancs")
-    print("🔍 Détection des numéros d'œuvres (sans correction automatique)")
+    print("🔍 Analyse de cohérence des numéros d'œuvres")
+    print("🤖 Correction automatique avec Ollama si disponible")
     
     success = extractor.extract_pdf(pdf_path, max_pages, start_page)
     
