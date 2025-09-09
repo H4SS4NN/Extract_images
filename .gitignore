@@ -10,3 +10,4 @@ test_results_ultra/
 test_results_script/
 .venv/
 .env
+__pycache__/

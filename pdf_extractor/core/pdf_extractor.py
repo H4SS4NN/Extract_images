@@ -26,6 +26,9 @@ from analyzers.coherence_analyzer import CoherenceAnalyzer
 from analyzers.quality_analyzer import QualityAnalyzer
 from analyzers.summary_analyzer import SummaryAnalyzer
 from analyzers.final_json_generator import FinalJSONGenerator
+from toc_planches import (extract_toc_from_pdf, extract_toc_from_pdf_multipage, build_plate_map, 
+                         save_toc_json, apply_renaming, prompt_for_renaming, 
+                         extract_artist_name_from_pdf, create_artwork_jsons_for_images)
 
 class PDFExtractor:
     """Extracteur PDF principal avec architecture modulaire"""
@@ -84,19 +87,92 @@ class PDFExtractor:
             logger.error(f"❌ Impossible de lire le PDF: {e}")
             return False
         
-        # Valider la page de départ
-        if start_page < 1 or start_page > total_pdf_pages:
-            logger.error(f"❌ start_page invalide: {start_page} (PDF = {total_pdf_pages} pages)")
-            return False
-
-        # Calculer la plage
-        if max_pages:
-            end_page = min(total_pdf_pages, start_page + max_pages - 1)
-        else:
-            end_page = total_pdf_pages
-        total_pages = end_page - start_page + 1
+        # ÉTAPE 1: Chercher TABLE DES PLANCHES dans les 15 dernières pages
+        toc_data = None
+        plate_map = {}
+        artist_name = "Artiste Inconnu"
+        try:
+            logger.info("🔍 Recherche TABLE DES PLANCHES dans les 15 dernières pages...")
+            toc_data = extract_toc_from_pdf_multipage(pdf_path, last_n=15)
+            if toc_data:
+                plate_map = build_plate_map(toc_data)
+                save_toc_json(toc_data, self.session_dir)
+                logger.info(f"📋 {len(plate_map)} planches mappées")
+                
+                # Extraire le nom de l'artiste depuis le PDF
+                artist_name = extract_artist_name_from_pdf(pdf_path)
+                logger.info(f"🎨 Artiste détecté: {artist_name}")
+                
+                # Afficher les pages disponibles
+                pages_with_plates = [p['page'] for p in toc_data['plates'] if p['page'] is not None]
+                if pages_with_plates:
+                    logger.info(f"📄 Pages contenant des planches: {sorted(set(pages_with_plates))}")
+            else:
+                logger.info("ℹ️ Aucune TABLE DES PLANCHES trouvée")
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur extraction TOC: {e}")
         
+        # ÉTAPE 2: Utiliser les paramètres saisis ou demander confirmation
+        if toc_data and plate_map:
+            # Proposer les pages avec des planches
+            pages_with_plates = [p['page'] for p in toc_data['plates'] if p['page'] is not None]
+            if pages_with_plates:
+                unique_pages = sorted(set(pages_with_plates))
+                logger.info(f"📋 Pages recommandées (avec planches): {unique_pages}")
+                
+                # Calculer la plage par défaut basée sur les paramètres saisis
+                if start_page < 1 or start_page > total_pdf_pages:
+                    logger.error(f"❌ start_page invalide: {start_page} (PDF = {total_pdf_pages} pages)")
+                    return False
+
+                if max_pages:
+                    end_page = min(total_pdf_pages, start_page + max_pages - 1)
+                else:
+                    end_page = total_pdf_pages
+                
+                # Afficher la plage calculée et demander confirmation
+                logger.info(f"📄 Plage calculée: {start_page} → {end_page} (total {end_page - start_page + 1} pages)")
+                
+                try:
+                    user_input = input(f"📄 Confirmer cette plage ? [O/n] ou saisir une nouvelle plage: ").strip()
+                    if user_input.lower() in ('', 'o', 'oui', 'y', 'yes'):
+                        # Utiliser la plage calculée
+                        pass
+                    else:
+                        # Parser la nouvelle plage
+                        start_page, end_page = self._parse_page_range(user_input, total_pdf_pages)
+                except (KeyboardInterrupt, EOFError):
+                    logger.info("❌ Annulé par l'utilisateur")
+                    return False
+            else:
+                # Pas de pages spécifiques, utiliser les paramètres saisis
+                if start_page < 1 or start_page > total_pdf_pages:
+                    logger.error(f"❌ start_page invalide: {start_page} (PDF = {total_pdf_pages} pages)")
+                    return False
+
+                if max_pages:
+                    end_page = min(total_pdf_pages, start_page + max_pages - 1)
+                else:
+                    end_page = total_pdf_pages
+        else:
+            # Pas de TOC trouvé, utiliser les paramètres par défaut
+            if start_page < 1 or start_page > total_pdf_pages:
+                logger.error(f"❌ start_page invalide: {start_page} (PDF = {total_pdf_pages} pages)")
+                return False
+
+            # Calculer la plage
+            if max_pages:
+                end_page = min(total_pdf_pages, start_page + max_pages - 1)
+            else:
+                end_page = total_pdf_pages
+        
+        total_pages = end_page - start_page + 1
         logger.info(f"📄 Pages à traiter: {start_page} → {end_page} (total {total_pages})")
+        
+        # Stocker les données du sommaire pour utilisation immédiate
+        self.plate_map = plate_map
+        self.artist_name = artist_name
+        self.current_pdf_path = pdf_path
         
         # Créer le fichier de résumé global
         global_log = {
@@ -108,6 +184,8 @@ class PDFExtractor:
             'total_pages': total_pages,
             'start_page': start_page,
             'end_page': end_page,
+            'toc_found': toc_data is not None,
+            'plate_count': len(plate_map),
             'pages': []
         }
         
@@ -166,6 +244,26 @@ class PDFExtractor:
         logger.info(f"🎉 EXTRACTION TERMINÉE: {self.total_extracted} images extraites")
         logger.info(f"📁 Résultats: {self.session_dir}")
         
+        # Apply renaming and create artwork JSONs if TOC was found
+        if toc_data and plate_map:
+            try:
+                if prompt_for_renaming():
+                    logger.info("🔄 Application du renommage...")
+                    stats = apply_renaming(self.session_dir, plate_map, global_log)
+                    
+                    logger.info("📊 Résumé du renommage:")
+                    logger.info(f"  • Total images: {stats['total_images']}")
+                    logger.info(f"  • Renommées: {stats['renamed']}")
+                    logger.info(f"  • Ignorées: {stats['skipped']}")
+                    logger.info(f"  • Non trouvées: {stats['not_matched']}")
+                    
+                    # Les JSONs d'œuvres ont été créés immédiatement pendant l'extraction
+                    logger.info("ℹ️ JSONs d'œuvres créés pendant l'extraction")
+                else:
+                    logger.info("ℹ️ Renommage annulé par l'utilisateur")
+            except Exception as e:
+                logger.error(f"❌ Erreur lors du renommage: {e}")
+        
         # Ouvrir le dossier automatiquement
         if os.name == 'nt':
             try:
@@ -174,6 +272,49 @@ class PDFExtractor:
                 pass
         
         return True
+    
+    def _parse_page_range(self, user_input: str, total_pages: int) -> tuple:
+        """Parse user input for page range selection"""
+        try:
+            # Format: "1-50" ou "1,5,10" ou "1-10,20-30"
+            if '-' in user_input:
+                # Plage simple: "1-50"
+                if ',' not in user_input:
+                    start, end = user_input.split('-', 1)
+                    start_page = max(1, int(start.strip()))
+                    end_page = min(total_pages, int(end.strip()))
+                    return start_page, end_page
+                else:
+                    # Plages multiples: "1-10,20-30"
+                    ranges = user_input.split(',')
+                    all_pages = set()
+                    for range_str in ranges:
+                        if '-' in range_str:
+                            start, end = range_str.split('-', 1)
+                            start_p = max(1, int(start.strip()))
+                            end_p = min(total_pages, int(end.strip()))
+                            all_pages.update(range(start_p, end_p + 1))
+                        else:
+                            page = int(range_str.strip())
+                            if 1 <= page <= total_pages:
+                                all_pages.add(page)
+                    
+                    if all_pages:
+                        return min(all_pages), max(all_pages)
+                    else:
+                        return 1, total_pages
+            else:
+                # Pages individuelles: "1,5,10"
+                pages = [int(p.strip()) for p in user_input.split(',')]
+                valid_pages = [p for p in pages if 1 <= p <= total_pages]
+                if valid_pages:
+                    return min(valid_pages), max(valid_pages)
+                else:
+                    return 1, total_pages
+                    
+        except (ValueError, IndexError):
+            logger.warning(f"⚠️ Format invalide: {user_input}. Utilisation de toutes les pages.")
+            return 1, total_pages
     
     def process_page(self, pdf_path: str, page_num: int) -> dict:
         """Traite une page spécifique"""
@@ -314,6 +455,42 @@ class PDFExtractor:
                     
                     # Sauvegarder l'image
                     cv2.imwrite(image_path, extracted_image)
+                    
+                    # NOUVEAU : Créer le JSON d'œuvre immédiatement si on a le sommaire
+                    if hasattr(self, 'plate_map') and self.plate_map and artwork_number:
+                        try:
+                            from toc_planches import create_artwork_json, save_artwork_json, extract_artist_name_from_pdf
+                            
+                            plate_number = int(artwork_number)
+                            logger.debug(f"🔍 Tentative création JSON pour planche {plate_number}")
+                            logger.debug(f"🔍 Planches disponibles: {list(self.plate_map.keys())[:10]}...")
+                            
+                            if plate_number in self.plate_map:
+                                # Obtenir le nom de l'artiste (une seule fois)
+                                if not hasattr(self, 'artist_name'):
+                                    self.artist_name = extract_artist_name_from_pdf(self.current_pdf_path)
+                                
+                                # Créer le JSON de l'œuvre
+                                plate_info = self.plate_map[plate_number]
+                                logger.info(f"🔍 Plate info pour {plate_number}: {plate_info}")
+                                image_size = (extracted_image.shape[1], extracted_image.shape[0])
+                                logger.info(f"🔍 Appel create_artwork_json pour planche {plate_number}")
+                                artwork_data = create_artwork_json(
+                                    image_path, plate_number, plate_info, self.artist_name, image_size
+                                )
+                                logger.info(f"🔍 JSON créé avec medium: {artwork_data.get('medium', 'N/A')}")
+                                
+                                # Sauvegarder le JSON
+                                from pathlib import Path
+                                json_path = save_artwork_json(artwork_data, Path(page_dir), plate_number)
+                                if json_path:
+                                    logger.info(f"    🎨 JSON créé: oeuvre_{plate_number:03d}.json")
+                            else:
+                                logger.warning(f"    ⚠️ Planche {plate_number} non trouvée dans le sommaire")
+                        except Exception as e:
+                            logger.error(f"❌ Erreur création JSON immédiat: {e}")
+                            import traceback
+                            logger.debug(f"Traceback: {traceback.format_exc()}")
                     
                     # Enregistrer les détails
                     rect_details = {
@@ -495,7 +672,12 @@ class PDFExtractor:
     def _extract_page_text(self, page_image: np.ndarray) -> str:
         """Extrait le texte d'une page avec OCR"""
         try:
-            if not hasattr(pytesseract.pytesseract, 'tesseract_cmd'):
+            import pytesseract
+            
+            # Vérifier Tesseract avec test de version
+            try:
+                _ = pytesseract.get_tesseract_version()
+            except Exception:
                 return ""
             
             # Convertir en niveaux de gris
@@ -517,19 +699,19 @@ class PDFExtractor:
     def _detect_artwork_number(self, image: np.ndarray, rectangle: dict) -> str:
         """Détecte le numéro d'œuvre sous/près du visuel.
         Heuristiques:
-        - Cherche UNIQUEMENT SOUS le rectangle (zone prioritaire)
-        - Plusieurs prétraitements (OTSU, adaptatif, inversion, morpho)
-        - OCR Tesseract avec différents PSM
-        - Extraction par regex des nombres 1-3 chiffres en priorité
-        - 4 chiffres acceptés si précédés de mots-clés (fig, n°, no, plate, pl)
+        - Zones de recherche par priorité stricte
+        - OCR optimisé pour nombres courts (1-6 chiffres)
+        - Prétraitements multiples pour robustesse
         Retourne une chaîne du numéro ou None.
         """
         try:
             import pytesseract
             import re
             
-            # Vérifier Tesseract
-            if not hasattr(pytesseract.pytesseract, 'tesseract_cmd'):
+            # Vérifier Tesseract avec test de version
+            try:
+                _ = pytesseract.get_tesseract_version()
+            except Exception:
                 return None
             
             H, W = image.shape[:2]
@@ -543,18 +725,22 @@ class PDFExtractor:
                 zh = max(0, min(zh, H - zy))
                 return (zx, zy, zw, zh)
 
-            # NOUVEAU : Zones plus précises et limitées
-            pad_x = max(10, w // 20)  # Padding réduit
+            # Zones de recherche par priorité stricte
+            pad_x = max(10, w // 20)
             pad_y = max(10, h // 20)
 
             zones = [
-                # PRIORITÉ 1: Sous le rectangle (zone prioritaire)
+                # PRIORITÉ 1: Petite bande sous l'image (30-80px)
                 clamp_zone(x - pad_x, y + h + 2, w + 2 * pad_x, max(30, min(80, h // 3))),
-                # PRIORITÉ 2: Zone élargie sous (si la première ne trouve rien)
+                # PRIORITÉ 2: Bande plus large sous l'image (40-100px)
                 clamp_zone(x - pad_x*2, y + h + 2, w + 4 * pad_x, max(40, min(100, h // 2))),
-                # PRIORITÉ 3: À droite (pour images seules sur page)
+                # PRIORITÉ 3: Très fine bande DANS l'image - bas (20px)
+                clamp_zone(x + w//6, y + h - 20, w*2//3, 20),
+                # PRIORITÉ 4: Très fine bande DANS l'image - haut (20px)
+                clamp_zone(x + w//6, y, w*2//3, 20),
+                # PRIORITÉ 5: Zone à droite de l'image
                 clamp_zone(x + w + 4, y, min(80 + w // 3, W - (x + w + 4)), min(h, 120)),
-                # PRIORITÉ 4: À gauche (pour images seules sur page)
+                # PRIORITÉ 6: Zone à gauche de l'image
                 clamp_zone(max(0, x - (60 + w // 3)), y, min(80 + w // 3, x), min(h, 120)),
             ]
 
@@ -577,28 +763,22 @@ class PDFExtractor:
                 outs.append(b4)
                 return outs
 
-            # OCR configs
-            ocr_confs = [
-                '--psm 7 -c tessedit_char_whitelist=0123456789NnOo°figFIGPlpl.:',
-                '--psm 6 -c tessedit_char_whitelist=0123456789NnOo°figFIGPlpl.:',
-                '--psm 8 -c tessedit_char_whitelist=0123456789',
-            ]
-
-            def extract_numbers(text):
+            # OCR optimisé pour nombres courts (1-6 chiffres)
+            def extract_numbers_optimized(text):
+                """Extrait les nombres de 1-6 chiffres avec regex simple"""
                 text_norm = text.replace('\n', ' ').strip()
-                # Capturer patterns avec mots-clés
                 candidates = []
-                for m in re.finditer(r'(fig\.?|n[o°]?\.?|no\.?|n°|plate\.?|pl\.?|cat\.?|inv\.?|num\.?|numéro\.?)[\s:]*\(?([0-9]{1,4})\)?', text_norm, flags=re.IGNORECASE):
-                    word, num = m.group(1), m.group(2)
-                    weight = 2.0  # mot-clé présent ⇒ confiance plus élevée
-                    candidates.append((num, weight))
-                # Capturer nombres isolés
-                for m in re.finditer(r'\b([0-9]{1,4})\b', text_norm):
+                
+                # Chercher nombres de 1-6 chiffres
+                for m in re.finditer(r'\b(\d{1,6})\b', text_norm):
                     num = m.group(1)
-                    # éviter années probables si 4 chiffres > 1899
+                    # Éviter années probables (4 chiffres > 1899)
                     if len(num) == 4 and int(num) > 1899:
                         continue
-                    candidates.append((num, 1.0))
+                    # Priorité aux nombres courts (1-3 chiffres)
+                    weight = 2.0 if len(num) <= 3 else 1.0
+                    candidates.append((num, weight))
+                
                 return candidates
 
             best = (None, 0.0)
@@ -610,46 +790,61 @@ class PDFExtractor:
                 gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
                 
                 for b in prepro(gray):
-                    # agrandir pour OCR
+                    # Agrandir pour OCR
                     big = cv2.resize(b, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
-                    for conf in ocr_confs:
-                        try:
-                            text = pytesseract.image_to_string(big, config=conf)
-                        except Exception:
-                            continue
-                        for num, wscore in extract_numbers(text):
-                            # NOUVEAU : Scoring hiérarchique par zone
-                            if zone_idx == 0:  # Sous l'image (priorité maximale)
+                    
+                    # OCR optimisé pour nombres courts
+                    try:
+                        config = "--psm 7 -c tessedit_char_whitelist=0123456789"
+                        text = pytesseract.image_to_string(big, config=config)
+                        match = re.search(r"\b\d{1,6}\b", text)
+                        if match:
+                            num = match.group(0)
+                            # Éviter années probables
+                            if len(num) == 4 and int(num) > 1899:
+                                continue
+                            
+                            # Scoring hiérarchique par zone
+                            if zone_idx == 0:  # Petite bande sous l'image (priorité maximale)
+                                proximity = 4.0
+                                zone_bonus = 3.0
+                            elif zone_idx == 1:  # Bande plus large sous l'image
+                                proximity = 3.5
+                                zone_bonus = 2.5
+                            elif zone_idx == 2:  # Fine bande DANS l'image - bas
                                 proximity = 3.0
                                 zone_bonus = 2.0
-                            elif zone_idx == 1:  # Zone élargie sous
-                                proximity = 2.0
-                                zone_bonus = 1.5
-                            elif zone_idx == 2:  # À droite
+                            elif zone_idx == 3:  # Fine bande DANS l'image - haut
+                                proximity = 2.5
+                                zone_bonus = 1.8
+                            elif zone_idx == 4:  # À droite
                                 proximity = 1.5
                                 zone_bonus = 1.2
                             else:  # À gauche
                                 proximity = 1.5
                                 zone_bonus = 1.2
                             
-                            length_bonus = 1.0 if 1 <= len(num) <= 3 else 0.5
+                            # Bonus pour nombres courts
+                            length_bonus = 2.0 if len(num) <= 3 else 1.0
                             
-                            # Vérifier que le numéro est dans une zone raisonnable
+                            # Vérifier distance horizontale (sauf zones latérales)
                             center_x = sx + sw // 2
                             rect_center_x = x + w // 2
                             horizontal_distance = abs(center_x - rect_center_x)
                             
-                            # Si trop loin horizontalement, pénaliser (sauf pour zones latérales)
-                            if zone_idx < 2 and horizontal_distance > w * 0.8:
+                            if zone_idx < 4 and horizontal_distance > w * 0.8:
                                 continue
                             
-                            score = wscore * proximity * length_bonus * zone_bonus
+                            score = proximity * zone_bonus * length_bonus
                             
                             if score > best[1]:
                                 best = (num, score)
+                                
+                    except Exception:
+                        continue
 
-                # Si on a un très bon score dans les zones prioritaires (sous), arrêter
-                if best[0] and best[1] >= 4.0 and zone_idx <= 1:
+                # Arrêt précoce si très bon score dans zones prioritaires
+                if best[0] and best[1] >= 8.0 and zone_idx <= 1:
                     break
 
             return best[0]
