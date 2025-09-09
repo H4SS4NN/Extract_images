@@ -1,0 +1,58 @@
+{
+  "artist_name": "Pablo Picasso",
+  "title": "Guernica",
+  "id": "6bee7a64-a3c6-418d-9a1a-bcd7ebff89b5",
+  "image_url": "http://localhost:5000/images/page_001/2.png",
+  "image_path": "test_final_json\\extractions_ultra\\test_session\\page_001\\2.png",
+  "image_filename": "2.png",
+  "size": [
+    349.3,
+    776.6
+  ],
+  "size_unit": "cm",
+  "medium": "huile sur toile",
+  "signature": true,
+  "execution_year": 1937,
+  "description": "Pablo Picasso, Guernica, 1937, huile sur toile, 349.3 x 776.6 cm, signé",
+  "provenance": [
+    "Museo Reina Sofía, Madrid"
+  ],
+  "literature": [
+    "Picasso, Guernica, 1937"
+  ],
+  "exhibition": [
+    "Museo Reina Sofía, Madrid, 2020"
+  ],
+  "metadata": {
+    "artwork_number": 2,
+    "page_number": 1,
+    "is_doubtful": true,
+    "confidence": 0.6,
+    "detection_method": "template_detector",
+    "image_dimensions": [
+      0,
+      0
+    ],
+    "extraction_method": "mistral",
+    "raw_text": "",
+    "bbox": {
+      "x": 500,
+      "y": 300,
+      "w": 250,
+      "h": 350
+    },
+    "area": 87500,
+    "doubt_reasons": [
+      "taille_anormale",
+      "peu_de_contenu"
+    ],
+    "quality_analysis": {
+      "is_doubtful": true,
+      "confidence": 0.6,
+      "reasons": [
+        "taille_anormale",
+        "peu_de_contenu"
+      ]
+    }
+  }
+}

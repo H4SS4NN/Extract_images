@@ -281,12 +281,18 @@ def get_pdf_page(page_num):
                 try:
                     from pdf2image import convert_from_path
                     
-                    # Convertir seulement la page demandée
+                    # CORRECTION: Mapper le numéro de page de l'extraction vers le numéro de page du PDF
+                    start_page = meta.get('start_page', 1)
+                    pdf_page_num = start_page + page_num - 1
+                    
+                    # DEBUG: Log pour vérifier la cohérence des numéros de pages
+                    print(f"🔍 DEBUG: Page extraction {page_num} → PDF page {pdf_page_num} depuis {pdf_path}")
+                    
                     page_images = convert_from_path(
                         pdf_path, 
                         dpi=200,  # DPI raisonnable pour l'affichage web
-                        first_page=page_num,
-                        last_page=page_num
+                        first_page=pdf_page_num,
+                        last_page=pdf_page_num
                     )
                     
                     if page_images:
@@ -546,7 +552,11 @@ def redetect_crop():
         from pdf2image import convert_from_path
         from PIL import Image
 
-        images = convert_from_path(pdf_path, dpi=dpi, first_page=page_num, last_page=page_num)
+        # CORRECTION: Mapper le numéro de page de l'extraction vers le numéro de page du PDF
+        start_page = meta.get('start_page', 1)
+        pdf_page_num = start_page + page_num - 1
+
+        images = convert_from_path(pdf_path, dpi=dpi, first_page=pdf_page_num, last_page=pdf_page_num)
         if not images:
             return jsonify({'success': False, 'error': 'Conversion PDF échouée'}), 500
 

@@ -1021,7 +1021,7 @@
                             <div class="status-badge ${state !== 'pending' ? state : ''}"></div>
                             <img src="/api/get-image/${image.path}" alt="${image.filename}">
                             <div class="image-info">
-                                <div class="image-number">${image.filename}</div>
+                                <div class="image-number">${image.artwork_number || image.filename}</div>
                                 <div>${image.is_doubtful ? '⚠️ Douteuse' : '📷 Normale'}</div>
                                 ${image.artwork_number ? `<div>🎨 Œuvre ${image.artwork_number}</div>` : ''}
                                 ${image.was_rotated ? `<div>🔄 Rotation corrigée</div>` : ''}
@@ -1468,7 +1468,7 @@
                             <div class="status-badge ${state !== 'pending' ? state : ''}"></div>
                             <img src="/api/get-image/page_${pageNum}/${imagePath}" alt="${image.filename}">
                             <div class="image-info">
-                                <div class="image-number">${image.filename}</div>
+                                <div class="image-number">${image.artwork_number || image.filename}</div>
                                 <div>${image.is_doubtful ? '⚠️ Douteuse' : '📷 Normale'}</div>
                                 ${image.artwork_number ? `<div>🎨 Œuvre ${image.artwork_number}</div>` : ''}
                                 ${image.was_rotated ? `<div>🔄 Rotation corrigée</div>` : ''}
