@@ -104,7 +104,7 @@ class PDFExtractor:
         
         # Extraire le sommaire selon la collection
         toc_data = self.collection.extract_toc(pdf_path)
-        plate_map = {}
+        plate_map = None
         
         if toc_data:
             plate_map = build_plate_map(toc_data)
@@ -195,7 +195,7 @@ class PDFExtractor:
             'start_page': start_page,
             'end_page': end_page,
             'toc_found': toc_data is not None,
-            'plate_count': len(plate_map) if plate_map else 0,
+            'plate_count': len(plate_map),
             'pages': []
         }
         
@@ -1130,6 +1130,144 @@ class PDFExtractor:
         
         # Utiliser la méthode de détection de la collection
         return self.collection.detect_artwork_number(image, rectangle, page_context)
+            
+            H, W = image.shape[:2]
+            bbox = rectangle.get('bbox', {})
+            x, y, w, h = bbox.get('x', 0), bbox.get('y', 0), bbox.get('w', 0), bbox.get('h', 0)
+
+            # Définir zones de recherche (clamp aux bords)
+            def clamp_zone(zx, zy, zw, zh):
+                zx = max(0, zx); zy = max(0, zy)
+                zw = max(0, min(zw, W - zx))
+                zh = max(0, min(zh, H - zy))
+                return (zx, zy, zw, zh)
+
+            # Zones de recherche par priorité stricte
+            pad_x = max(10, w // 20)
+            pad_y = max(10, h // 20)
+
+            zones = [
+                # PRIORITÉ 1: Petite bande sous l'image (30-80px)
+                clamp_zone(x - pad_x, y + h + 2, w + 2 * pad_x, max(30, min(80, h // 3))),
+                # PRIORITÉ 2: Bande plus large sous l'image (40-100px)
+                clamp_zone(x - pad_x*2, y + h + 2, w + 4 * pad_x, max(40, min(100, h // 2))),
+                # PRIORITÉ 3: Très fine bande DANS l'image - bas (20px)
+                clamp_zone(x + w//6, y + h - 20, w*2//3, 20),
+                # PRIORITÉ 4: Très fine bande DANS l'image - haut (20px)
+                clamp_zone(x + w//6, y, w*2//3, 20),
+                # PRIORITÉ 5: Zone à droite de l'image
+                clamp_zone(x + w + 4, y, min(80 + w // 3, W - (x + w + 4)), min(h, 120)),
+                # PRIORITÉ 6: Zone à gauche de l'image
+                clamp_zone(max(0, x - (60 + w // 3)), y, min(80 + w // 3, x), min(h, 120)),
+            ]
+
+            # Prétraitements à tester
+            def prepro(gray):
+                outs = []
+                # OTSU
+                _, b1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                outs.append(b1)
+                # OTSU inversé
+                _, b2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                outs.append(b2)
+                # Adaptatif
+                b3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 9)
+                outs.append(b3)
+                # CLAHE puis OTSU
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                g2 = clahe.apply(gray)
+                _, b4 = cv2.threshold(g2, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                outs.append(b4)
+                return outs
+
+            # OCR optimisé pour nombres courts (1-6 chiffres)
+            def extract_numbers_optimized(text):
+                """Extrait les nombres de 1-6 chiffres avec regex simple"""
+                text_norm = text.replace('\n', ' ').strip()
+                candidates = []
+                
+                # Chercher nombres de 1-6 chiffres
+                for m in re.finditer(r'\b(\d{1,6})\b', text_norm):
+                    num = m.group(1)
+                    # Éviter années probables (4 chiffres > 1899)
+                    if len(num) == 4 and int(num) > 1899:
+                        continue
+                    # Priorité aux nombres courts (1-3 chiffres)
+                    weight = 2.0 if len(num) <= 3 else 1.0
+                    candidates.append((num, weight))
+                
+                return candidates
+
+            best = (None, 0.0)
+            # Parcourir les zones (priorité stricte)
+            for zone_idx, (sx, sy, sw, sh) in enumerate(zones):
+                if sw <= 5 or sh <= 5:
+                    continue
+                roi = image[sy:sy+sh, sx:sx+sw]
+                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                
+                for b in prepro(gray):
+                    # Agrandir pour OCR
+                    big = cv2.resize(b, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+                    
+                    # OCR optimisé pour nombres courts
+                    try:
+                        config = "--psm 7 -c tessedit_char_whitelist=0123456789"
+                        text = pytesseract.image_to_string(big, config=config)
+                        match = re.search(r"\b\d{1,6}\b", text)
+                        if match:
+                            num = match.group(0)
+                            # Éviter années probables
+                            if len(num) == 4 and int(num) > 1899:
+                                continue
+                            
+                            # Scoring hiérarchique par zone
+                            if zone_idx == 0:  # Petite bande sous l'image (priorité maximale)
+                                proximity = 4.0
+                                zone_bonus = 3.0
+                            elif zone_idx == 1:  # Bande plus large sous l'image
+                                proximity = 3.5
+                                zone_bonus = 2.5
+                            elif zone_idx == 2:  # Fine bande DANS l'image - bas
+                                proximity = 3.0
+                                zone_bonus = 2.0
+                            elif zone_idx == 3:  # Fine bande DANS l'image - haut
+                                proximity = 2.5
+                                zone_bonus = 1.8
+                            elif zone_idx == 4:  # À droite
+                                proximity = 1.5
+                                zone_bonus = 1.2
+                            else:  # À gauche
+                                proximity = 1.5
+                                zone_bonus = 1.2
+                            
+                            # Bonus pour nombres courts
+                            length_bonus = 2.0 if len(num) <= 3 else 1.0
+                            
+                            # Vérifier distance horizontale (sauf zones latérales)
+                            center_x = sx + sw // 2
+                            rect_center_x = x + w // 2
+                            horizontal_distance = abs(center_x - rect_center_x)
+                            
+                            if zone_idx < 4 and horizontal_distance > w * 0.8:
+                                continue
+                            
+                            score = proximity * zone_bonus * length_bonus
+                            
+                            if score > best[1]:
+                                best = (num, score)
+                                
+                    except Exception:
+                        continue
+
+                # Arrêt précoce si très bon score dans zones prioritaires
+                if best[0] and best[1] >= 8.0 and zone_idx <= 1:
+                    break
+
+            return best[0]
+        except Exception:
+            return None
+    
     def _is_duplicate_rectangle(self, new_rect: dict, existing_rects: list) -> bool:
         """Vérifie si un rectangle est un doublon"""
         # Implémentation directe de la logique de déduplication
@@ -1177,6 +1315,24 @@ class PDFExtractor:
                     return True
         
         return False
+    
+    def _create_doubtful_info(self, doubtful_dir: str, base_filename: str, 
+                             quality_analysis: dict, extracted_image: np.ndarray):
+        """Crée un fichier info pour une image douteuse"""
+        info_filename = f"{base_filename.replace('.png', '_INFO.txt')}"
+        info_path = os.path.join(doubtful_dir, info_filename)
+        
+        with open(info_path, 'w', encoding='utf-8') as f:
+            f.write(f"IMAGE DOUTEUSE - ANALYSE AUTOMATIQUE\n")
+            f.write(f"={'=' * 40}\n\n")
+            f.write(f"Fichier: {base_filename}\n")
+            f.write(f"Confiance: {quality_analysis['confidence']:.2f}/1.0\n")
+            f.write(f"Dimensions: {extracted_image.shape[1]}×{extracted_image.shape[0]} pixels\n")
+            f.write(f"Taille: {(extracted_image.shape[0] * extracted_image.shape[1]) // 1000}K pixels\n\n")
+            f.write(f"RAISONS DE LA CLASSIFICATION DOUTEUSE:\n")
+            for reason in quality_analysis['reasons']:
+                desc = self.quality_analyzer.get_quality_description(reason)
+                f.write(f"{desc}\n")
     
     def _create_page_text_details(self, page_dir: str, page_result: dict):
         """Crée un fichier texte avec les détails de la page"""
