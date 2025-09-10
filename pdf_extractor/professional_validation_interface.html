@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validation Interface - Art Collections</title>
+    
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* Professional Color Palette */
+            --primary: #0f172a;
+            --primary-light: #1e293b;
+            --primary-lighter: #334155;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --neutral-50: #f8fafc;
+            --neutral-100: #f1f5f9;
+            --neutral-200: #e2e8f0;
+            --neutral-300: #cbd5e1;
+            --neutral-400: #94a3b8;
+            --neutral-500: #64748b;
+            --neutral-600: #475569;
+            --neutral-700: #334155;
+            --neutral-800: #1e293b;
+            --neutral-900: #0f172a;
+            
+            /* Typography */
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--neutral-50);
+            color: var(--neutral-900);
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        /* Header */
+        .header {
+            background: white;
+            border-bottom: 1px solid var(--neutral-200);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--neutral-900);
+        }
+
+        .subtitle {
+            font-size: 0.875rem;
+            color: var(--neutral-500);
+            font-weight: 400;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--neutral-100);
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--neutral-400);
+        }
+
+        .status-dot.connected { background: var(--success); }
+        .status-dot.error { background: var(--error); }
+
+        /* Main Layout */
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 2rem;
+            align-items: start;
+        }
+
+        /* Cards */
+        .card {
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--neutral-200);
+            background: var(--neutral-50);
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--neutral-900);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-subtitle {
+            font-size: 0.875rem;
+            color: var(--neutral-500);
+            margin-top: 0.25rem;
+        }
+
+        .card-content {
+            padding: 1.5rem;
+        }
+
+        /* Session Info */
+        .session-info {
+            margin-bottom: 2rem;
+        }
+
+        .session-selector {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .select {
+            flex: 1;
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--neutral-300);
+            border-radius: 8px;
+            background: white;
+            font-size: 0.875rem;
+            color: var(--neutral-900);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--neutral-100);
+            color: var(--neutral-700);
+            border: 1px solid var(--neutral-300);
+        }
+
+        .btn-secondary:hover {
+            background: var(--neutral-200);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .btn-error {
+            background: var(--error);
+            color: white;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--neutral-500);
+            text-transform: uppercase;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+        }
+
+        /* Collection Badge */
+        .collection-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .collection-badge.picasso {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .collection-badge.dubuffet {
+            background: #f3e8ff;
+            color: #7c2d12;
+        }
+
+        /* Navigation Controls */
+        .nav-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 12px;
+        }
+
+        .page-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .page-input {
+            width: 60px;
+            padding: 0.5rem;
+            border: 1px solid var(--neutral-300);
+            border-radius: 6px;
+            text-align: center;
+            font-size: 0.875rem;
+        }
+
+        .validation-stats {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .validation-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .validation-badge.validated {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .validation-badge.rejected {
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .validation-badge.pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        /* Images Grid */
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .image-card {
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .image-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .image-card.validated {
+            border-color: var(--success);
+            box-shadow: 0 0 0 1px var(--success);
+        }
+
+        .image-card.rejected {
+            border-color: var(--error);
+            box-shadow: 0 0 0 1px var(--error);
+        }
+
+        .image-card.pending {
+            border-color: var(--warning);
+            box-shadow: 0 0 0 1px var(--warning);
+        }
+
+        .image-preview-container {
+            position: relative;
+            height: 200px;
+            background: var(--neutral-50);
+            overflow: hidden;
+        }
+
+        .image-preview {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: transform 0.2s;
+        }
+
+        .image-card:hover .image-preview {
+            transform: scale(1.02);
+        }
+
+        .quality-indicator {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.625rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .quality-indicator.precise {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .quality-indicator.approximate {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .image-info {
+            padding: 1rem;
+        }
+
+        .image-title {
+            font-weight: 600;
+            color: var(--neutral-900);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .artwork-number {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.625rem;
+            font-weight: 600;
+        }
+
+        /* OCR Info */
+        .ocr-info {
+            background: var(--neutral-50);
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin: 0.75rem 0;
+            font-size: 0.8125rem;
+        }
+
+        .ocr-title {
+            font-weight: 600;
+            color: var(--neutral-900);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .ocr-details {
+            color: var(--neutral-600);
+            line-height: 1.4;
+        }
+
+        .ocr-details > div {
+            margin-bottom: 0.25rem;
+        }
+
+        .ocr-confidence {
+            background: #dcfce7;
+            color: #166534;
+            padding: 0.125rem 0.375rem;
+            border-radius: 4px;
+            font-size: 0.625rem;
+            font-weight: 600;
+        }
+
+        /* Image Meta */
+        .image-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin: 0.75rem 0;
+            font-size: 0.75rem;
+            color: var(--neutral-500);
+        }
+
+        /* Validation Controls */
+        .validation-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .validation-controls .btn {
+            flex: 1;
+            padding: 0.5rem;
+            font-size: 0.75rem;
+            justify-content: center;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: sticky;
+            top: 6rem;
+            height: fit-content;
+        }
+
+        .pdf-viewer {
+            width: 100%;
+            height: 400px;
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            object-fit: contain;
+            background: var(--neutral-50);
+        }
+
+        /* OCR Debug Panel */
+        .ocr-debug-panel {
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .ocr-debug-panel.active {
+            display: block;
+        }
+
+        .debug-images {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 0.75rem;
+            margin-top: 0.75rem;
+        }
+
+        .debug-image {
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 6px;
+            padding: 0.5rem;
+            text-align: center;
+        }
+
+        .debug-image img {
+            width: 100%;
+            height: 60px;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+
+        .debug-image-name {
+            font-size: 0.625rem;
+            color: var(--neutral-500);
+            margin-top: 0.25rem;
+            word-break: break-all;
+        }
+
+        /* Loading & Error States */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--neutral-500);
+            font-size: 0.875rem;
+        }
+
+        .loading::before {
+            content: '';
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--neutral-300);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error-state {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            font-size: 0.875rem;
+        }
+
+        .success-state {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            font-size: 0.875rem;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: white;
+            margin: 2% auto;
+            padding: 2rem;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+            box-shadow: var(--shadow-xl);
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: var(--neutral-100);
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--neutral-600);
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--neutral-200);
+            color: var(--neutral-900);
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+
+            .sidebar {
+                position: static;
+            }
+
+            .images-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .header-content {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-controls {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: stretch;
+            }
+
+            .validation-stats {
+                justify-content: center;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo-section">
+                <div class="logo">
+                    <i data-lucide="image"></i>
+                </div>
+                <div>
+                    <div class="title">Art Collection Validator</div>
+                    <div class="subtitle">Professional validation interface</div>
+                </div>
+                <div id="collectionBadge" class="collection-badge">Loading...</div>
+            </div>
+            
+            <div id="statusIndicator" class="status-indicator">
+                <div class="status-dot"></div>
+                <span>Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="main-container">
+        <!-- Main Panel -->
+        <div class="main-panel">
+            <!-- Session Info -->
+            <div class="card session-info">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="folder"></i>
+                        Session Management
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div class="session-selector">
+                        <select id="sessionSelect" class="select" onchange="changeSession()">
+                            <option value="">Loading sessions...</option>
+                        </select>
+                        <button onclick="refreshSessions()" class="btn btn-secondary">
+                            <i data-lucide="refresh-cw"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="totalPages">-</div>
+                            <div class="stat-label">Pages</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="totalImages">-</div>
+                            <div class="stat-label">Images</div>
+                        </div>
+                        <div class="stat-card" id="ocrCard" style="display: none;">
+                            <div class="stat-value" id="ocrArtworks">-</div>
+                            <div class="stat-label">OCR Artworks</div>
+                        </div>
+                        <div class="stat-card" id="jsonCard" style="display: none;">
+                            <div class="stat-value" id="individualJsons">-</div>
+                            <div class="stat-label">JSON Files</div>
+                        </div>
+                    </div>
+
+                    <!-- Dubuffet Features -->
+                    <div id="dubuffetFeatures" class="ocr-info" style="display: none;">
+                        <div class="ocr-title">
+                            <i data-lucide="palette"></i>
+                            Dubuffet Collection Features
+                        </div>
+                        <div class="ocr-details">
+                            This Dubuffet session includes OCR caption extraction, individual artwork JSONs, and debug OCR images.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Controls -->
+            <div class="nav-controls">
+                <div class="page-nav">
+                    <button id="prevPage" class="btn btn-secondary">
+                        <i data-lucide="chevron-left"></i>
+                        Previous
+                    </button>
+                    <span style="display: flex; align-items: center; gap: 0.5rem; color: var(--neutral-600);">
+                        Page
+                        <input type="number" id="currentPageInput" min="1" value="1" class="page-input">
+                        of <span id="maxPages">-</span>
+                    </span>
+                    <button id="nextPage" class="btn btn-secondary">
+                        Next
+                        <i data-lucide="chevron-right"></i>
+                    </button>
+                </div>
+                
+                <div class="validation-stats">
+                    <div class="validation-badge validated">
+                        <i data-lucide="check-circle"></i>
+                        <span id="validatedCount">0</span>
+                    </div>
+                    <div class="validation-badge rejected">
+                        <i data-lucide="x-circle"></i>
+                        <span id="rejectedCount">0</span>
+                    </div>
+                    <div class="validation-badge pending">
+                        <i data-lucide="clock"></i>
+                        <span id="pendingCount">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Images Content -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="images"></i>
+                        Page <span id="currentPageTitle">1</span> Images
+                    </div>
+                    <div class="card-subtitle" id="pageImageCount">Loading...</div>
+                </div>
+                <div class="card-content">
+                    <div id="imagesContainer" class="loading">Loading images...</div>
+                </div>
+            </div>
+
+            <!-- OCR Debug Panel (Dubuffet only) -->
+            <div id="ocrDebugPanel" class="card ocr-debug-panel">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="search"></i>
+                        OCR Debug Images
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div id="debugImagesContainer" class="debug-images"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- PDF Viewer -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="file-text"></i>
+                        Original PDF Page
+                    </div>
+                </div>
+                <div class="card-content">
+                    <img id="pdfViewer" class="pdf-viewer" src="" alt="PDF Page">
+                </div>
+            </div>
+
+            <!-- Page Statistics -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="bar-chart-3"></i>
+                        Page Statistics
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div id="pageStats" style="font-size: 0.875rem; color: var(--neutral-600);">
+                        <div style="margin-bottom: 0.5rem;">Images: <span id="pageImagesCount">0</span></div>
+                        <div id="pageOcrDebugStat" style="display: none; margin-bottom: 0.5rem;">OCR Debug: <span id="pageOcrDebugCount">0</span></div>
+                        <div style="margin-bottom: 0.5rem;">Resolution: <span id="pageDpi">-</span> DPI</div>
+                        <div style="margin-bottom: 0.5rem;">Dimensions: <span id="pageDimensions">-</span></div>
+                        <div>Collection: <span id="pageCollection">-</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i data-lucide="save"></i>
+                        Actions
+                    </div>
+                </div>
+                <div class="card-content">
+                    <button onclick="saveValidation()" class="btn btn-success" style="width: 100%; margin-bottom: 0.75rem;">
+                        <i data-lucide="save"></i>
+                        Save Validation
+                    </button>
+                    <button onclick="exportValidated()" class="btn btn-primary" style="width: 100%;">
+                        <i data-lucide="download"></i>
+                        Export Validated
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Image Details -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close">
+                <i data-lucide="x"></i>
+            </button>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Variables globales
+        let currentPage = 1;
+        let totalPages = 0;
+        let imageStates = {}; // État de validation de chaque image
+        let sessionData = null;
+        let pageImages = [];
+        let isDubuffet = false;
+        let allSessions = [];
+
+        // Initialisation
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSessions();
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            document.getElementById('prevPage').addEventListener('click', () => changePage(-1));
+            document.getElementById('nextPage').addEventListener('click', () => changePage(1));
+            document.getElementById('currentPageInput').addEventListener('change', function() {
+                const page = parseInt(this.value);
+                if (page >= 1 && page <= totalPages) {
+                    currentPage = page;
+                    loadPageImages();
+                }
+            });
+
+            // Modal
+            document.getElementById('imageModal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeModal();
+                }
+            });
+            document.querySelector('.modal-close').addEventListener('click', closeModal);
+        }
+
+        async function loadSessions() {
+            try {
+                updateStatusIndicator('connecting', 'Loading sessions...');
+                
+                const response = await fetch('/api/sessions');
+                const data = await response.json();
+                
+                if (data.error) {
+                    showError('Error: ' + data.error);
+                    return;
+                }
+
+                allSessions = data.sessions;
+                populateSessionSelector();
+                
+                // Charger la session courante ou la première
+                if (data.current_session) {
+                    await setCurrentSession(data.current_session.name);
+                } else if (allSessions.length > 0) {
+                    await setCurrentSession(allSessions[0].name);
+                } else {
+                    showError('No sessions available');
+                }
+                
+            } catch (error) {
+                updateStatusIndicator('error', 'Connection failed');
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        function populateSessionSelector() {
+            const select = document.getElementById('sessionSelect');
+            select.innerHTML = '';
+            
+            allSessions.forEach(session => {
+                const option = document.createElement('option');
+                option.value = session.name;
+                const collectionEmoji = session.is_dubuffet ? '🎨' : '🎭';
+                const ocrInfo = session.has_ocr ? ` (${session.ocr_artworks} OCR)` : '';
+                option.textContent = `${collectionEmoji} ${session.pdf_name}${ocrInfo}`;
+                select.appendChild(option);
+            });
+        }
+
+        async function changeSession() {
+            const select = document.getElementById('sessionSelect');
+            const sessionName = select.value;
+            if (sessionName) {
+                await setCurrentSession(sessionName);
+            }
+        }
+
+        async function setCurrentSession(sessionName) {
+            try {
+                updateStatusIndicator('connecting', 'Switching session...');
+                
+                // Définir la session active
+                await fetch(`/api/session/${sessionName}`, { method: 'GET' });
+                
+                // Charger les données de session
+                await loadSessionData();
+                
+                // Mettre à jour le sélecteur
+                document.getElementById('sessionSelect').value = sessionName;
+                
+                updateStatusIndicator('connected', 'Session loaded');
+                
+            } catch (error) {
+                updateStatusIndicator('error', 'Session load failed');
+                showError('Session change error: ' + error.message);
+            }
+        }
+
+        async function refreshSessions() {
+            await loadSessions();
+            showSuccess('Sessions refreshed!');
+        }
+
+        async function loadSessionData() {
+            try {
+                const response = await fetch('/api/get-session-data');
+                const data = await response.json();
+                
+                if (data.error) {
+                    showError('Error: ' + data.error);
+                    return;
+                }
+
+                sessionData = data;
+                totalPages = data.totalPages;
+                isDubuffet = data.isDubuffet;
+                
+                // Mettre à jour l'interface
+                document.getElementById('totalPages').textContent = data.totalPages || '-';
+                document.getElementById('totalImages').textContent = data.totalImages || '-';
+                document.getElementById('maxPages').textContent = data.totalPages || '-';
+                
+                // Badge de collection
+                const badge = document.getElementById('collectionBadge');
+                if (isDubuffet) {
+                    badge.textContent = 'Dubuffet';
+                    badge.className = 'collection-badge dubuffet';
+                } else {
+                    badge.textContent = 'Picasso';
+                    badge.className = 'collection-badge picasso';
+                }
+                
+                // Fonctionnalités spécifiques Dubuffet
+                const dubuffetFeatures = document.getElementById('dubuffetFeatures');
+                const ocrCard = document.getElementById('ocrCard');
+                const jsonCard = document.getElementById('jsonCard');
+                
+                if (isDubuffet) {
+                    dubuffetFeatures.style.display = 'block';
+                    ocrCard.style.display = 'block';
+                    jsonCard.style.display = 'block';
+                    document.getElementById('ocrArtworks').textContent = data.ocrArtworks || '-';
+                    document.getElementById('individualJsons').textContent = data.individualJsons || '-';
+                } else {
+                    dubuffetFeatures.style.display = 'none';
+                    ocrCard.style.display = 'none';
+                    jsonCard.style.display = 'none';
+                }
+                
+                // Charger la première page
+                currentPage = 1;
+                document.getElementById('currentPageInput').value = 1;
+                loadPageImages();
+                
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        async function loadPageImages() {
+            const container = document.getElementById('imagesContainer');
+            container.innerHTML = '<div class="loading">Loading images...</div>';
+            
+            try {
+                const response = await fetch(`/api/get-page-images/${currentPage}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    container.innerHTML = `<div class="error-state">Error: ${data.error}</div>`;
+                    return;
+                }
+
+                pageImages = data.images;
+                displayImages(data.images);
+                
+                // Mettre à jour le panneau latéral
+                updateSidePanel(data);
+                
+                // Charger l'image PDF
+                loadPdfPage();
+                
+            } catch (error) {
+                container.innerHTML = `<div class="error-state">Loading error: ${error.message}</div>`;
+            }
+        }
+
+        function displayImages(images) {
+            const container = document.getElementById('imagesContainer');
+            document.getElementById('currentPageTitle').textContent = currentPage;
+            document.getElementById('pageImageCount').textContent = `${images.length} images found`;
+            
+            if (!images || images.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--neutral-500);">No images on this page</div>';
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.className = 'images-grid';
+            
+            images.forEach((image, index) => {
+                const card = createImageCard(image, index);
+                grid.appendChild(card);
+            });
+            
+            container.innerHTML = '';
+            container.appendChild(grid);
+            
+            updateValidationStats();
+        }
+
+        function createImageCard(image, index) {
+            const card = document.createElement('div');
+            const imageId = `page${currentPage}_${image.filename}`;
+            const state = imageStates[imageId] || 'pending';
+            
+            card.className = `image-card ${state}`;
+            
+            // Informations OCR (Dubuffet uniquement)
+            let ocrSection = '';
+            if (isDubuffet) {
+                if (image.has_ocr) {
+                    const confidence = image.ocr_confidence ? `${Math.round(image.ocr_confidence)}%` : 'N/A';
+                    const dimensions = image.ocr_dimensions ? 
+                        `${image.ocr_dimensions.width || '?'}×${image.ocr_dimensions.height || '?'} cm` : 'N/A';
+                    
+                    ocrSection = `
+                        <div class="ocr-info">
+                            <div class="ocr-title">
+                                <i data-lucide="palette"></i>
+                                ${image.ocr_title || 'Title not detected'}
+                            </div>
+                            <div class="ocr-details">
+                                <div><strong>Medium:</strong> ${image.ocr_medium || 'N/A'}</div>
+                                <div><strong>Dimensions:</strong> ${dimensions}</div>
+                                <div><strong>Date:</strong> ${image.ocr_date || 'N/A'}</div>
+                                <div><strong>OCR Region:</strong> ${image.ocr_region || 'N/A'} 
+                                    <span class="ocr-confidence">${confidence}</span>
+                                </div>
+                            </div>
+                            ${image.artwork_json ? `<div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--neutral-600);">📄 ${image.artwork_json}</div>` : ''}
+                        </div>
+                    `;
+                } else {
+                    ocrSection = `
+                        <div class="ocr-info" style="background: #fef2f2; border-color: #fecaca;">
+                            <div class="ocr-title" style="color: #991b1b;">
+                                <i data-lucide="alert-circle"></i>
+                                No OCR caption detected
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            
+            card.innerHTML = `
+                <div class="image-preview-container" onclick="showImageModal('${imageId}', '${image.path}', ${JSON.stringify(image).replace(/"/g, '&quot;')})">
+                    <img src="/api/get-image/${image.path}" 
+                         alt="${image.filename}" 
+                         class="image-preview">
+                    <div class="quality-indicator ${image.is_bounding_box ? 'approximate' : 'precise'}">
+                        ${image.is_bounding_box ? 'Approximate' : 'Precise'}
+                    </div>
+                </div>
+                
+                <div class="image-info">
+                    <div class="image-title">
+                        ${image.filename}
+                        ${image.artwork_number ? `<span class="artwork-number">#${image.artwork_number}</span>` : ''}
+                    </div>
+                    
+                    ${ocrSection}
+                    
+                    <div class="image-meta">
+                        <div><strong>Size:</strong> ${image.dimensions}</div>
+                        <div><strong>Weight:</strong> ${image.size_kb} KB</div>
+                        <div><strong>Confidence:</strong> ${Math.round(image.confidence * 100)}%</div>
+                        <div><strong>Method:</strong> ${image.detection_method}</div>
+                    </div>
+                    
+                    ${image.is_doubtful ? '<div style="background: #fef2f2; color: #991b1b; padding: 0.5rem; border-radius: 6px; font-size: 0.75rem; margin: 0.5rem 0; display: flex; align-items: center; gap: 0.375rem;"><i data-lucide="alert-triangle" style="width: 14px; height: 14px;"></i><strong>Doubtful image</strong></div>' : ''}
+                    
+                    <div class="validation-controls">
+                        <button class="btn btn-success" onclick="setImageState('${imageId}', 'validated')">
+                            <i data-lucide="check"></i>
+                            Validate
+                        </button>
+                        <button class="btn btn-error" onclick="setImageState('${imageId}', 'rejected')">
+                            <i data-lucide="x"></i>
+                            Reject
+                        </button>
+                        <button class="btn btn-warning" onclick="setImageState('${imageId}', 'pending')">
+                            <i data-lucide="clock"></i>
+                            Pending
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // Re-initialize icons in the new content
+            lucide.createIcons();
+            
+            return card;
+        }
+
+        function updateSidePanel(data) {
+            // Statistiques de page
+            document.getElementById('pageImagesCount').textContent = data.images.length;
+            document.getElementById('pageDpi').textContent = data.meta.page_dpi || '-';
+            document.getElementById('pageDimensions').textContent = 
+                data.meta.page_width && data.meta.page_height ? 
+                `${data.meta.page_width}×${data.meta.page_height}` : '-';
+            document.getElementById('pageCollection').textContent = data.meta.collection_type || 'picasso';
+            
+            // Spécifique Dubuffet : OCR Debug
+            if (isDubuffet) {
+                const debugStat = document.getElementById('pageOcrDebugStat');
+                debugStat.style.display = 'block';
+                document.getElementById('pageOcrDebugCount').textContent = data.meta.ocr_debug_count || 0;
+                
+                // Afficher les images debug OCR
+                const debugPanel = document.getElementById('ocrDebugPanel');
+                const debugContainer = document.getElementById('debugImagesContainer');
+                
+                if (data.meta.ocr_debug_images && data.meta.ocr_debug_images.length > 0) {
+                    debugPanel.classList.add('active');
+                    debugContainer.innerHTML = '';
+                    
+                    data.meta.ocr_debug_images.forEach(debugImg => {
+                        const debugDiv = document.createElement('div');
+                        debugDiv.className = 'debug-image';
+                        debugDiv.innerHTML = `
+                            <img src="/api/get-image/${debugImg.path}" alt="${debugImg.filename}">
+                            <div class="debug-image-name">${debugImg.filename}</div>
+                            ${debugImg.ocr_text ? `<div style="font-size: 0.5rem; color: var(--neutral-500); margin-top: 0.25rem; max-height: 30px; overflow: hidden;">${debugImg.ocr_text.substring(0, 50)}...</div>` : ''}
+                        `;
+                        debugContainer.appendChild(debugDiv);
+                    });
+                } else {
+                    debugPanel.classList.remove('active');
+                }
+            } else {
+                document.getElementById('pageOcrDebugStat').style.display = 'none';
+                document.getElementById('ocrDebugPanel').classList.remove('active');
+            }
+        }
+
+        async function loadPdfPage() {
+            const pdfViewer = document.getElementById('pdfViewer');
+            pdfViewer.src = `/api/get-pdf-page/${currentPage}`;
+            pdfViewer.onerror = function() {
+                this.alt = `Error loading PDF page ${currentPage}`;
+                this.style.background = 'var(--neutral-100)';
+            };
+        }
+
+        function changePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                document.getElementById('currentPageInput').value = currentPage;
+                loadPageImages();
+            }
+        }
+
+        function setImageState(imageId, state) {
+            imageStates[imageId] = state;
+            
+            // Mettre à jour visuellement la carte
+            const cards = document.querySelectorAll('.image-card');
+            cards.forEach(card => {
+                const container = card.querySelector('.image-preview-container');
+                if (container && container.onclick.toString().includes(imageId)) {
+                    card.className = `image-card ${state}`;
+                }
+            });
+            
+            updateValidationStats();
+        }
+
+        function updateValidationStats() {
+            const stats = { validated: 0, rejected: 0, pending: 0 };
+            
+            Object.values(imageStates).forEach(state => {
+                stats[state] = (stats[state] || 0) + 1;
+            });
+            
+            // Compter aussi les images de la page courante non encore validées
+            const currentPageImageCount = pageImages.length;
+            const currentPageValidated = Object.keys(imageStates).filter(id => 
+                id.startsWith(`page${currentPage}_`)).length;
+            const currentPagePending = currentPageImageCount - currentPageValidated;
+            
+            stats.pending += currentPagePending;
+            
+            document.getElementById('validatedCount').textContent = stats.validated;
+            document.getElementById('rejectedCount').textContent = stats.rejected;
+            document.getElementById('pendingCount').textContent = stats.pending;
+            
+            // Mettre à jour les boutons de navigation
+            document.getElementById('prevPage').disabled = currentPage <= 1;
+            document.getElementById('nextPage').disabled = currentPage >= totalPages;
+        }
+
+        function showImageModal(imageId, imagePath, imageData) {
+            const modal = document.getElementById('imageModal');
+            const content = document.getElementById('modalContent');
+            
+            const image = JSON.parse(imageData.replace(/&quot;/g, '"'));
+            
+            let ocrDetails = '';
+            if (isDubuffet && image.has_ocr) {
+                ocrDetails = `
+                    <div class="ocr-info">
+                        <div class="ocr-title">
+                            <i data-lucide="palette"></i>
+                            OCR Information
+                        </div>
+                        <div class="ocr-details">
+                            <div><strong>Title:</strong> ${image.ocr_title || 'Not detected'}</div>
+                            <div><strong>Medium:</strong> ${image.ocr_medium || 'Not detected'}</div>
+                            <div><strong>Dimensions:</strong> ${image.ocr_dimensions ? `${image.ocr_dimensions.width || '?'}×${image.ocr_dimensions.height || '?'} cm` : 'Not detected'}</div>
+                            <div><strong>Date:</strong> ${image.ocr_date || 'Not detected'}</div>
+                            <div><strong>OCR Region:</strong> ${image.ocr_region || 'N/A'}</div>
+                            <div><strong>OCR Confidence:</strong> ${image.ocr_confidence ? Math.round(image.ocr_confidence) + '%' : 'N/A'}</div>
+                            ${image.artwork_json ? `<div style="margin-top: 0.75rem;"><strong>JSON File:</strong> <a href="#" onclick="showArtworkJson(${currentPage}, '${image.filename}')" style="color: var(--accent);">${image.artwork_json}</a></div>` : ''}
+                        </div>
+                    </div>
+                `;
+            } else if (isDubuffet && !image.has_ocr) {
+                ocrDetails = `
+                    <div class="ocr-info" style="background: #fef2f2; border-color: #fecaca;">
+                        <div class="ocr-title" style="color: #991b1b;">
+                            <i data-lucide="alert-circle"></i>
+                            No OCR Caption
+                        </div>
+                        <div style="color: #991b1b;">This image has no associated OCR data.</div>
+                    </div>
+                `;
+            }
+            
+            content.innerHTML = `
+                <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem;">${image.filename}</h2>
+                <img src="/api/get-image/${imagePath}" style="max-width: 100%; max-height: 400px; object-fit: contain; display: block; margin: 1rem auto; border-radius: 8px; box-shadow: var(--shadow-md);">
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; font-size: 0.875rem;">
+                    <div><strong>Dimensions:</strong> ${image.dimensions}</div>
+                    <div><strong>Size:</strong> ${image.size_kb} KB</div>
+                    <div><strong>Confidence:</strong> ${Math.round(image.confidence * 100)}%</div>
+                    <div><strong>Method:</strong> ${image.detection_method}</div>
+                    <div><strong>Artwork Number:</strong> ${image.artwork_number || 'Not detected'}</div>
+                    <div><strong>Folder:</strong> ${image.folder}</div>
+                </div>
+                
+                ${ocrDetails}
+                
+                <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+                    <button onclick="setImageState('${imageId}', 'validated'); closeModal();" class="btn btn-success" style="flex: 1;">
+                        <i data-lucide="check"></i>
+                        Validate
+                    </button>
+                    <button onclick="setImageState('${imageId}', 'rejected'); closeModal();" class="btn btn-error" style="flex: 1;">
+                        <i data-lucide="x"></i>
+                        Reject
+                    </button>
+                    <button onclick="setImageState('${imageId}', 'pending'); closeModal();" class="btn btn-warning" style="flex: 1;">
+                        <i data-lucide="clock"></i>
+                        Pending
+                    </button>
+                </div>
+            `;
+            
+            // Re-initialize icons in modal
+            lucide.createIcons();
+            
+            modal.style.display = 'block';
+        }
+
+        async function showArtworkJson(pageNum, filename) {
+            try {
+                const response = await fetch(`/api/get-artwork-json/${pageNum}/${filename}`);
+                const jsonData = await response.json();
+                
+                if (jsonData.error) {
+                    alert('Error: ' + jsonData.error);
+                    return;
+                }
+                
+                const jsonWindow = window.open('', '_blank', 'width=800,height=600');
+                jsonWindow.document.write(`
+                    <html>
+                    <head>
+                        <title>JSON Artwork - ${filename}</title>
+                        <style>
+                            body { font-family: 'Inter', monospace; padding: 20px; background: #f8fafc; }
+                            pre { background: white; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; overflow: auto; }
+                        </style>
+                    </head>
+                    <body>
+                        <h2>🎨 JSON Artwork: ${filename}</h2>
+                        <pre>${JSON.stringify(jsonData, null, 2)}</pre>
+                    </body>
+                    </html>
+                `);
+            } catch (error) {
+                alert('JSON loading error: ' + error.message);
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        async function saveValidation() {
+            try {
+                const validationData = {
+                    sessionName: sessionData.sessionName,
+                    totalPages: totalPages,
+                    imageStates: imageStates,
+                    summary: {
+                        validated: Object.values(imageStates).filter(s => s === 'validated').length,
+                        rejected: Object.values(imageStates).filter(s => s === 'rejected').length,
+                        pending: Object.values(imageStates).filter(s => s === 'pending').length,
+                        total: Object.keys(imageStates).length
+                    }
+                };
+                
+                const response = await fetch('/api/save-validation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(validationData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Validation saved successfully!');
+                } else {
+                    showError('Save error: ' + result.error);
+                }
+                
+            } catch (error) {
+                showError('Save error: ' + error.message);
+            }
+        }
+
+        async function exportValidated() {
+            try {
+                const response = await fetch('/api/export-validated-images', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageStates: imageStates })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess(`${result.count} validated images exported!`);
+                } else {
+                    showError('Export error: ' + result.error);
+                }
+                
+            } catch (error) {
+                showError('Export error: ' + error.message);
+            }
+        }
+
+        function updateStatusIndicator(status, message) {
+            const indicator = document.getElementById('statusIndicator');
+            const dot = indicator.querySelector('.status-dot');
+            const text = indicator.querySelector('span');
+            
+            dot.className = 'status-dot';
+            
+            switch(status) {
+                case 'connected':
+                    dot.classList.add('connected');
+                    text.textContent = 'Connected';
+                    break;
+                case 'connecting':
+                    dot.classList.add('pending');
+                    text.textContent = message || 'Connecting...';
+                    break;
+                case 'error':
+                    dot.classList.add('error');
+                    text.textContent = 'Error';
+                    break;
+                default:
+                    text.textContent = message || 'Connecting...';
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-state';
+            errorDiv.textContent = message;
+            errorDiv.style.position = 'fixed';
+            errorDiv.style.top = '20px';
+            errorDiv.style.right = '20px';
+            errorDiv.style.zIndex = '1001';
+            errorDiv.style.maxWidth = '400px';
+            
+            document.body.appendChild(errorDiv);
+            
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    errorDiv.parentNode.removeChild(errorDiv);
+                }
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-state';
+            successDiv.textContent = message;
+            successDiv.style.position = 'fixed';
+            successDiv.style.top = '20px';
+            successDiv.style.right = '20px';
+            successDiv.style.zIndex = '1001';
+            successDiv.style.maxWidth = '400px';
+            
+            document.body.appendChild(successDiv);
+            
+            setTimeout(() => {
+                if (successDiv.parentNode) {
+                    successDiv.parentNode.removeChild(successDiv);
+                }
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

@@ -29,14 +29,19 @@ from analyzers.final_json_generator import FinalJSONGenerator
 from toc_planches import (extract_toc_from_pdf, extract_toc_from_pdf_multipage, build_plate_map, 
                          save_toc_json, apply_renaming, prompt_for_renaming, 
                          extract_artist_name_from_pdf, create_artwork_jsons_for_images)
+from artwork_collections import CollectionFactory
 
 class PDFExtractor:
     """Extracteur PDF principal avec architecture modulaire"""
     
-    def __init__(self):
+    def __init__(self, collection_name: str = None, skip_toc_search: bool = False):
         self.output_base_dir = OUTPUT_BASE_DIR
         self.session_dir = None
         self.total_extracted = 0
+        self.skip_toc_search = skip_toc_search  # Option pour désactiver la recherche sommaire
+        
+        # Initialiser la collection d'artiste
+        self.collection = self._initialize_collection(collection_name)
         
         # Initialiser les composants
         self.detectors = [
@@ -51,6 +56,44 @@ class PDFExtractor:
         
         # Configuration Tesseract
         self._configure_tesseract()
+    
+    def _initialize_collection(self, collection_name: str = None):
+        """Initialise la collection d'artiste"""
+        if collection_name:
+            collection = CollectionFactory.create_collection(collection_name)
+            if collection:
+                logger.info(f"✅ Collection sélectionnée: {collection.name}")
+                return collection
+            else:
+                logger.warning(f"⚠️ Collection '{collection_name}' non trouvée, utilisation de Picasso par défaut")
+        
+        # Collection par défaut (Picasso pour compatibilité)
+        collection = CollectionFactory.create_collection(CollectionFactory.get_default_collection())
+        logger.info(f"📚 Collection par défaut: {collection.name}")
+        return collection
+    
+    def set_collection(self, collection_name: str) -> bool:
+        """Change la collection utilisée"""
+        new_collection = CollectionFactory.create_collection(collection_name)
+        if new_collection:
+            self.collection = new_collection
+            logger.info(f"✅ Collection changée vers: {new_collection.name}")
+            return True
+        else:
+            logger.error(f"❌ Collection '{collection_name}' non trouvée")
+            return False
+    
+    def get_available_collections(self):
+        """Retourne les collections disponibles"""
+        return CollectionFactory.get_available_collections()
+    
+    def auto_detect_collection(self, pdf_path: str, extracted_text: str = "") -> str:
+        """Détecte automatiquement la collection"""
+        detected = CollectionFactory.auto_detect_collection(pdf_path, extracted_text)
+        if detected:
+            logger.info(f"🔍 Collection détectée automatiquement: {detected}")
+            self.set_collection(detected)
+        return detected
     
     def _configure_tesseract(self):
         """Configure Tesseract OCR"""
@@ -91,9 +134,30 @@ class PDFExtractor:
         toc_data = None
         plate_map = {}
         artist_name = "Artiste Inconnu"
-        try:
-            logger.info("🔍 Recherche TABLE DES PLANCHES dans les 15 dernières pages...")
-            toc_data = extract_toc_from_pdf_multipage(pdf_path, last_n=15)
+        
+        # ÉTAPE 1.5: Recherche de sommaire selon la collection
+        if self.collection.has_summary_page() and not self.skip_toc_search:
+            try:
+                import time
+                start_time = time.time()
+                
+                summary_config = self.collection.get_summary_detection_config()
+                keywords = summary_config.get('keywords', [])
+                logger.info(f"🔍 Recherche TABLE DES PLANCHES pour {self.collection.name} dans les 15 dernières pages...")
+                logger.info(f"📋 Mots-clés de recherche: {keywords}")
+                
+                # Activer temporairement les logs DEBUG pour cette section
+                import logging
+                original_level = logger.logger.level
+                logger.logger.setLevel(logging.DEBUG)
+                
+                try:
+                    toc_data = extract_toc_from_pdf_multipage(pdf_path, last_n=15, keywords=keywords)
+                    elapsed_time = time.time() - start_time
+                    logger.info(f"⏱️ Recherche sommaire terminée en {elapsed_time:.2f}s")
+                finally:
+                    # Restaurer le niveau de log original
+                    logger.logger.setLevel(original_level)
             if toc_data:
                 plate_map = build_plate_map(toc_data)
                 save_toc_json(toc_data, self.session_dir)
@@ -111,6 +175,12 @@ class PDFExtractor:
                 logger.info("ℹ️ Aucune TABLE DES PLANCHES trouvée")
         except Exception as e:
             logger.warning(f"⚠️ Erreur extraction TOC: {e}")
+        else:
+            if self.skip_toc_search:
+                logger.info(f"⚡ Recherche sommaire DÉSACTIVÉE (mode rapide)")
+            else:
+                logger.info(f"📋 Collection {self.collection.name}: Pas de recherche de sommaire (numéros directement sous les œuvres)")
+            artist_name = self.collection.name  # Utiliser le nom de la collection comme artiste
         
         # ÉTAPE 2: Utiliser les paramètres saisis ou demander confirmation
         if toc_data and plate_map:
@@ -264,6 +334,11 @@ class PDFExtractor:
             except Exception as e:
                 logger.error(f"❌ Erreur lors du renommage: {e}")
         
+        # ÉTAPE POST-EXTRACTION: Résumé pour Dubuffet
+        if self.collection.name.lower() == "dubuffet":
+            logger.info("✅ Dubuffet: JSON créés immédiatement pour chaque image détectée")
+            logger.info("🎨 OCR immédiat terminé - pas d'OCR global nécessaire")
+        
         # Ouvrir le dossier automatiquement
         if os.name == 'nt':
             try:
@@ -377,9 +452,18 @@ class PDFExtractor:
                 rectangles = detector.detect(page_cv)
                 logger.info(f"      → {len(rectangles)} rectangles trouvés")
                 
-                # Ajouter les rectangles uniques
+                # Ajouter les rectangles uniques avec filtre de taille pour Dubuffet
                 for rect in rectangles:
                     if not self._is_duplicate_rectangle(rect, all_rectangles):
+                        # Filtre spécifique Dubuffet : ignorer les petits rectangles
+                        if self.collection.name.lower() == "dubuffet":
+                            bbox = rect.get('bbox', {})
+                            width = bbox.get('w', 0)
+                            height = bbox.get('h', 0)
+                            if width < 500 or height < 500:
+                                logger.debug(f"    ⚠️ Rectangle ignoré (trop petit): {width}x{height}px")
+                                continue
+                        
                         all_rectangles.append(rect)
             
             page_result['rectangles_found'] = len(all_rectangles)
@@ -456,8 +540,12 @@ class PDFExtractor:
                     # Sauvegarder l'image
                     cv2.imwrite(image_path, extracted_image)
                     
-                    # NOUVEAU : Créer le JSON d'œuvre immédiatement si on a le sommaire
+                    # NOUVEAU : Créer le JSON d'œuvre immédiatement
+                    # PICASSO : Utilise le sommaire (plate_map)
+                    # DUBUFFET : Utilise l'OCR immédiat des légendes
+                    
                     if hasattr(self, 'plate_map') and self.plate_map and artwork_number:
+                        # PICASSO - JSON via sommaire
                         try:
                             from toc_planches import create_artwork_json, save_artwork_json, extract_artist_name_from_pdf
                             
@@ -489,6 +577,80 @@ class PDFExtractor:
                                 logger.warning(f"    ⚠️ Planche {plate_number} non trouvée dans le sommaire")
                         except Exception as e:
                             logger.error(f"❌ Erreur création JSON immédiat: {e}")
+                            import traceback
+                            logger.debug(f"Traceback: {traceback.format_exc()}")
+                    
+                    elif self.collection.name.lower() == "dubuffet" and artwork_number:
+                        # DUBUFFET - JSON via OCR immédiat des légendes
+                        try:
+                            logger.info(f"🎨 OCR immédiat Dubuffet pour image {artwork_number}")
+                            from dubuffet_ocr_extractor import DubuffetOCRExtractor
+                            
+                            # Initialiser l'extracteur OCR
+                            if not hasattr(self, 'dubuffet_ocr'):
+                                self.dubuffet_ocr = DubuffetOCRExtractor()
+                            
+                            # Charger l'image de la page complète
+                            page_full_path = os.path.join(page_dir, "page_full_image.jpg")
+                            if os.path.exists(page_full_path):
+                                page_bgr = cv2.imread(page_full_path)
+                                
+                                # Utiliser la bbox de l'image détectée comme zone d'œuvre
+                                bbox = rectangle.get('bbox', {})
+                                artwork_bbox = (
+                                    bbox.get('x', 0), bbox.get('y', 0),
+                                    bbox.get('x', 0) + bbox.get('w', 0),
+                                    bbox.get('y', 0) + bbox.get('h', 0)
+                                ) if bbox else None
+                                
+                                # Extraire la légende pour cette œuvre (avec bandes réduites)
+                                debug_prefix = os.path.join(page_dir, f"ocr_debug_artwork_{artwork_number}")
+                                caption_result = self.dubuffet_ocr.extract_caption_from_page(
+                                    page_bgr, artwork_bbox, band_px=150, save_debug=True, debug_prefix=debug_prefix
+                                )
+                                
+                                if caption_result.get("found_caption") and caption_result.get("items"):
+                                    # Prendre la première légende trouvée
+                                    caption_data = caption_result["items"][0]
+                                    
+                                    # Créer le JSON d'œuvre Dubuffet
+                                    artwork_num = int(artwork_number) if str(artwork_number).isdigit() else 0
+                                    artwork_json = {
+                                        "id": f"artwork_{artwork_num:03d}",
+                                        "index": caption_data.get("index", artwork_num),
+                                        "title": caption_data.get("title"),
+                                        "medium": caption_data.get("medium"),
+                                        "dimensions_cm": caption_data.get("dimensions_cm", {"width": None, "height": None}),
+                                        "date_text": caption_data.get("date_text"),
+                                        "date_iso": caption_data.get("date_iso"),
+                                        "approximate": caption_data.get("approximate", False),
+                                        "page": page_num,
+                                        "image_file": filename,
+                                        "image_path": image_path,
+                                        "image_size": {"width": extracted_image.shape[1], "height": extracted_image.shape[0]},
+                                        "ocr_region": caption_data.get("region"),
+                                        "ocr_confidence": caption_data.get("confidence_mean", 0.0),
+                                        "ocr_text_raw": caption_data.get("ocr_text_raw", ""),
+                                        "extraction_method": "dubuffet_immediate_ocr",
+                                        "extraction_date": datetime.now().isoformat()
+                                    }
+                                    
+                                    # Sauvegarder le JSON individuel
+                                    json_filename = f"oeuvre_{artwork_num:03d}.json"
+                                    json_path = os.path.join(page_dir, json_filename)
+                                    with open(json_path, 'w', encoding='utf-8') as f:
+                                        json.dump(artwork_json, f, indent=2, ensure_ascii=False)
+                                    
+                                    logger.info(f"    🎨 JSON Dubuffet créé: {json_filename}")
+                                    logger.info(f"    📝 Titre: {caption_data.get('title', 'N/A')}")
+                                    logger.info(f"    🎭 Médium: {caption_data.get('medium', 'N/A')}")
+                                else:
+                                    logger.warning(f"    ⚠️ Aucune légende trouvée pour l'œuvre {artwork_number}")
+                            else:
+                                logger.warning(f"    ⚠️ Image de page complète non trouvée: {page_full_path}")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Erreur OCR immédiat Dubuffet: {e}")
                             import traceback
                             logger.debug(f"Traceback: {traceback.format_exc()}")
                     
@@ -697,158 +859,137 @@ class PDFExtractor:
             return ""
     
     def _detect_artwork_number(self, image: np.ndarray, rectangle: dict) -> str:
-        """Détecte le numéro d'œuvre sous/près du visuel.
-        Heuristiques:
-        - Zones de recherche par priorité stricte
-        - OCR optimisé pour nombres courts (1-6 chiffres)
-        - Prétraitements multiples pour robustesse
-        Retourne une chaîne du numéro ou None.
-        """
+        """Détecte le numéro d'œuvre selon la collection configurée"""
         try:
             import pytesseract
             import re
             
-            # Vérifier Tesseract avec test de version
+            # Vérifier Tesseract
             try:
                 _ = pytesseract.get_tesseract_version()
             except Exception:
                 return None
             
-            H, W = image.shape[:2]
-            bbox = rectangle.get('bbox', {})
-            x, y, w, h = bbox.get('x', 0), bbox.get('y', 0), bbox.get('w', 0), bbox.get('h', 0)
-
-            # Définir zones de recherche (clamp aux bords)
-            def clamp_zone(zx, zy, zw, zh):
-                zx = max(0, zx); zy = max(0, zy)
-                zw = max(0, min(zw, W - zx))
-                zh = max(0, min(zh, H - zy))
-                return (zx, zy, zw, zh)
-
-            # Zones de recherche par priorité stricte
-            pad_x = max(10, w // 20)
-            pad_y = max(10, h // 20)
-
-            zones = [
-                # PRIORITÉ 1: Petite bande sous l'image (30-80px)
-                clamp_zone(x - pad_x, y + h + 2, w + 2 * pad_x, max(30, min(80, h // 3))),
-                # PRIORITÉ 2: Bande plus large sous l'image (40-100px)
-                clamp_zone(x - pad_x*2, y + h + 2, w + 4 * pad_x, max(40, min(100, h // 2))),
-                # PRIORITÉ 3: Très fine bande DANS l'image - bas (20px)
-                clamp_zone(x + w//6, y + h - 20, w*2//3, 20),
-                # PRIORITÉ 4: Très fine bande DANS l'image - haut (20px)
-                clamp_zone(x + w//6, y, w*2//3, 20),
-                # PRIORITÉ 5: Zone à droite de l'image
-                clamp_zone(x + w + 4, y, min(80 + w // 3, W - (x + w + 4)), min(h, 120)),
-                # PRIORITÉ 6: Zone à gauche de l'image
-                clamp_zone(max(0, x - (60 + w // 3)), y, min(80 + w // 3, x), min(h, 120)),
-            ]
-
-            # Prétraitements à tester
-            def prepro(gray):
-                outs = []
-                # OTSU
-                _, b1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                outs.append(b1)
-                # OTSU inversé
-                _, b2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-                outs.append(b2)
-                # Adaptatif
-                b3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 9)
-                outs.append(b3)
-                # CLAHE puis OTSU
+            # Obtenir les zones de détection depuis la collection
+            zones = self.collection.get_detection_zones(image, rectangle)
+            if not zones:
+                return None
+            
+            # Configuration OCR de la collection
+            ocr_config = self.collection.get_ocr_config()
+            scoring_weights = self.collection.get_scoring_weights()
+            
+            # Prétraitements
+            def apply_preprocessing(gray, preprocessing_list):
+                results = []
+                for prep_type in preprocessing_list:
+                    if prep_type == 'otsu':
+                        _, b = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        results.append(b)
+                    elif prep_type == 'otsu_inv':
+                        _, b = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                        results.append(b)
+                    elif prep_type == 'adaptive':
+                        b = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 9)
+                        results.append(b)
+                    elif prep_type == 'clahe_otsu':
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
                 g2 = clahe.apply(gray)
-                _, b4 = cv2.threshold(g2, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                outs.append(b4)
-                return outs
-
-            # OCR optimisé pour nombres courts (1-6 chiffres)
-            def extract_numbers_optimized(text):
-                """Extrait les nombres de 1-6 chiffres avec regex simple"""
-                text_norm = text.replace('\n', ' ').strip()
-                candidates = []
-                
-                # Chercher nombres de 1-6 chiffres
-                for m in re.finditer(r'\b(\d{1,6})\b', text_norm):
-                    num = m.group(1)
-                    # Éviter années probables (4 chiffres > 1899)
-                    if len(num) == 4 and int(num) > 1899:
-                        continue
-                    # Priorité aux nombres courts (1-3 chiffres)
-                    weight = 2.0 if len(num) <= 3 else 1.0
-                    candidates.append((num, weight))
-                
-                return candidates
+                        _, b = cv2.threshold(g2, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        results.append(b)
+                    elif prep_type == 'gaussian_blur_otsu':
+                        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+                        _, b = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        results.append(b)
+                return results
 
             best = (None, 0.0)
-            # Parcourir les zones (priorité stricte)
+            zone_weights = scoring_weights.get('zone_weights', [1.0] * len(zones))
+            length_bonus = scoring_weights.get('length_bonus', {1: 1.0, 2: 1.0, 3: 1.0})
+            early_stop_threshold = scoring_weights.get('early_stop_threshold', 8.0)
+            
+            # Parcourir les zones par priorité
             for zone_idx, (sx, sy, sw, sh) in enumerate(zones):
                 if sw <= 5 or sh <= 5:
                     continue
-                roi = image[sy:sy+sh, sx:sx+sw]
-                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                
-                for b in prepro(gray):
-                    # Agrandir pour OCR
-                    big = cv2.resize(b, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
                     
-                    # OCR optimisé pour nombres courts
-                    try:
-                        config = "--psm 7 -c tessedit_char_whitelist=0123456789"
-                        text = pytesseract.image_to_string(big, config=config)
-                        match = re.search(r"\b\d{1,6}\b", text)
-                        if match:
-                            num = match.group(0)
-                            # Éviter années probables
-                            if len(num) == 4 and int(num) > 1899:
+                roi = image[sy:sy+sh, sx:sx+sw]
+                if roi.size == 0:
+                    continue
+                    
+                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
+                
+                # Appliquer les prétraitements de la collection
+                preprocessed_images = apply_preprocessing(gray, ocr_config.get('preprocessing', ['otsu']))
+                
+                for processed_img in preprocessed_images:
+                    # Agrandir pour OCR
+                    scale_factor = ocr_config.get('scale_factor', 3.0)
+                    big = cv2.resize(processed_img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+                    
+                    # Tester chaque configuration OCR avec timeout
+                    for psm_config in ocr_config.get('psm_configs', ['--psm 7 -c tessedit_char_whitelist=0123456789']):
+                        try:
+                            # Ajouter un timeout pour éviter les blocages sur les vieux PC
+                            import signal
+                            import threading
+                            
+                            def timeout_handler():
+                                return None
+                            
+                            # OCR avec timeout de 10 secondes max
+                            ocr_result = None
+                            def run_ocr():
+                                nonlocal ocr_result
+                                try:
+                                    ocr_result = pytesseract.image_to_string(big, config=psm_config, timeout=10)
+                                except Exception as e:
+                                    logger.debug(f"OCR timeout ou erreur: {e}")
+                                    ocr_result = None
+                            
+                            ocr_thread = threading.Thread(target=run_ocr)
+                            ocr_thread.daemon = True
+                            ocr_thread.start()
+                            ocr_thread.join(timeout=15)  # 15 secondes max total
+                            
+                            if ocr_thread.is_alive():
+                                logger.debug(f"⚠️ OCR timeout après 15s, passage au suivant")
                                 continue
                             
-                            # Scoring hiérarchique par zone
-                            if zone_idx == 0:  # Petite bande sous l'image (priorité maximale)
-                                proximity = 4.0
-                                zone_bonus = 3.0
-                            elif zone_idx == 1:  # Bande plus large sous l'image
-                                proximity = 3.5
-                                zone_bonus = 2.5
-                            elif zone_idx == 2:  # Fine bande DANS l'image - bas
-                                proximity = 3.0
-                                zone_bonus = 2.0
-                            elif zone_idx == 3:  # Fine bande DANS l'image - haut
-                                proximity = 2.5
-                                zone_bonus = 1.8
-                            elif zone_idx == 4:  # À droite
-                                proximity = 1.5
-                                zone_bonus = 1.2
-                            else:  # À gauche
-                                proximity = 1.5
-                                zone_bonus = 1.2
-                            
-                            # Bonus pour nombres courts
-                            length_bonus = 2.0 if len(num) <= 3 else 1.0
-                            
-                            # Vérifier distance horizontale (sauf zones latérales)
-                            center_x = sx + sw // 2
-                            rect_center_x = x + w // 2
-                            horizontal_distance = abs(center_x - rect_center_x)
-                            
-                            if zone_idx < 4 and horizontal_distance > w * 0.8:
+                            if not ocr_result:
                                 continue
-                            
-                            score = proximity * zone_bonus * length_bonus
+                                
+                            text = ocr_result
+                            match = re.search(r"\b\d{1,6}\b", text)
+                            if match:
+                                raw_number = match.group(0)
+                                
+                                # Utiliser le préprocessing de la collection
+                                processed_number = self.collection.preprocess_number(raw_number)
+                                if not processed_number:
+                                    continue
+                                
+                                # Calcul du score avec les poids de la collection
+                                zone_weight = zone_weights[zone_idx] if zone_idx < len(zone_weights) else 1.0
+                                length_weight = length_bonus.get(len(processed_number), 1.0)
+                                
+                                score = zone_weight * length_weight
                             
                             if score > best[1]:
-                                best = (num, score)
+                                    best = (processed_number, score)
+                                    logger.debug(f"✅ Nouveau meilleur score: {processed_number} (score: {score:.2f})")
                                 
-                    except Exception:
+                        except Exception as e:
+                            logger.debug(f"Erreur OCR: {e}")
                         continue
 
-                # Arrêt précoce si très bon score dans zones prioritaires
-                if best[0] and best[1] >= 8.0 and zone_idx <= 1:
+                # Arrêt précoce selon le seuil de la collection
+                if best[0] and best[1] >= early_stop_threshold and zone_idx <= 1:
                     break
 
             return best[0]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Erreur détection numéro: {e}")
             return None
     
     def _is_duplicate_rectangle(self, new_rect: dict, existing_rects: list) -> bool:

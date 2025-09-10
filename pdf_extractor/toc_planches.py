@@ -113,54 +113,77 @@ def extract_toc_from_pdf(pdf_path: str, last_n: int = 10) -> Optional[Dict]:
         return None
 
 
-def extract_toc_from_pdf_multipage(pdf_path: str, last_n: int = 15) -> Optional[Dict]:
+def extract_toc_from_pdf_multipage(pdf_path: str, last_n: int = 15, keywords: List[str] = None) -> Optional[Dict]:
     """
     Extract TABLE DES PLANCHES with multi-page support.
     Cherche plus de pages et combine les résultats.
     """
     try:
+        logger.debug(f"🔍 DEBUG: extract_toc_from_pdf_multipage appelé avec:")
+        logger.debug(f"   - pdf_path: {pdf_path}")
+        logger.debug(f"   - last_n: {last_n}")
+        logger.debug(f"   - keywords: {keywords}")
+        
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
-            logger.error(f"PDF file not found: {pdf_path}")
+            logger.error(f"❌ PDF file not found: {pdf_path}")
             return None
             
         logger.info(f"🔍 Recherche TABLE DES PLANCHES dans les {last_n} dernières pages (mode multi-page)...")
+        logger.debug(f"📋 Mots-clés utilisés: {keywords if keywords else 'Mots-clés par défaut (Picasso)'}")
         
         all_plates = []
         toc_found = False
         source_pages = []
         
         # Essayer d'abord la couche texte
+        logger.debug(f"📖 PDFPLUMBER_AVAILABLE: {PDFPLUMBER_AVAILABLE}")
         if PDFPLUMBER_AVAILABLE:
             try:
+                logger.debug("🔍 Tentative d'extraction avec pdfplumber...")
                 with pdfplumber.open(pdf_path) as pdf:
                     total_pages = len(pdf.pages)
                     start_page = max(0, total_pages - last_n)
+                    logger.debug(f"📄 PDF: {total_pages} pages, recherche dans pages {start_page+1} à {total_pages}")
                     
                     for i in range(total_pages - 1, start_page - 1, -1):
+                        logger.debug(f"🔍 Analyse page {i+1}/{total_pages}")
                         page = pdf.pages[i]
                         text = page.extract_text()
                         
+                        logger.debug(f"📄 Page {i+1}: Texte extrait = {len(text) if text else 0} caractères")
                         if text and len(text.strip()) >= 50:
+                            # Afficher un échantillon du texte pour debug
+                            sample_text = text.strip()[:200] + "..." if len(text) > 200 else text.strip()
+                            logger.debug(f"📝 Échantillon texte page {i+1}: {sample_text}")
+                            
                             # Créer un dossier temporaire pour le debug
                             import tempfile
                             with tempfile.TemporaryDirectory() as temp_dir:
-                                toc_data = parse_toc_text(text, temp_dir)
+                                logger.debug(f"🔍 Analyse du texte avec keywords: {keywords}")
+                                toc_data = parse_toc_text(text, temp_dir, keywords)
                                 if toc_data:
+                                    logger.info(f"✅ TABLE DES PLANCHES trouvée sur page {i+1}!")
                                     page_plates = toc_data['plates']
                                     all_plates.extend(page_plates)
                                     source_pages.append(i)
                                     toc_found = True
-                                    
-                                    logger.info(f"📋 Page {i+1}: {len(page_plates)} planches trouvées")
-                                    
-                                    # Copier le debug vers le bon dossier si disponible
-                                    debug_src = os.path.join(temp_dir, "sommaire_parsing_debug.txt")
-                                    if os.path.exists(debug_src):
-                                        # Le dossier de destination sera fourni plus tard
-                                        pass
+                                else:
+                                    logger.debug(f"❌ Aucun sommaire détecté sur page {i+1}")
+                        else:
+                            logger.debug(f"⏭️ Page {i+1} ignorée (texte trop court: {len(text) if text else 0} caractères)")
             except Exception as e:
-                logger.debug(f"pdfplumber multi-page failed: {e}")
+                logger.error(f"❌ pdfplumber multi-page failed: {e}")
+                logger.debug(f"📋 Exception details: {str(e)}")
+                
+                # Erreurs communes avec pdfplumber
+                if "PSLiteral" in str(e) and "float" in str(e):
+                    logger.warning("⚠️ Erreur pdfplumber PSLiteral - PDF mal formaté, passage au fallback PyMuPDF")
+                elif "timeout" in str(e).lower():
+                    logger.warning("⚠️ Timeout pdfplumber - PC trop lent, passage au fallback")
+                else:
+                    import traceback
+                    logger.debug(f"📋 Traceback: {traceback.format_exc()}")
         
         if toc_found:
             # Trier par numéro de planche
@@ -210,7 +233,7 @@ def _extract_from_text_layer(pdf_path: Path, last_n: int) -> Optional[Dict]:
                     text = page.extract_text()
                     
                     if text and len(text.strip()) >= 50:  # Minimum text length
-                        toc_data = parse_toc_text(text)
+                        toc_data = parse_toc_text(text, keywords=keywords)
                         if toc_data:
                             toc_data['source_page_index'] = i
                             return toc_data
@@ -229,7 +252,7 @@ def _extract_from_text_layer(pdf_path: Path, last_n: int) -> Optional[Dict]:
                 text = page.get_text()
                 
                 if text and len(text.strip()) >= 50:  # Minimum text length
-                    toc_data = parse_toc_text(text)
+                    toc_data = parse_toc_text(text, keywords=keywords)
                     if toc_data:
                         toc_data['source_page_index'] = i
                         doc.close()
@@ -292,7 +315,7 @@ def _extract_from_ocr(pdf_path: Path, last_n: int) -> Optional[Dict]:
             text = pytesseract.image_to_string(big, config='--psm 6')
             
             if text and len(text.strip()) >= 50:  # Minimum text length
-                toc_data = parse_toc_text(text)
+                toc_data = parse_toc_text(text, keywords=keywords)
                 if toc_data:
                     # Ajuster l'index de page pour correspondre au PDF original
                     actual_page_index = start_page + i - 1
@@ -306,7 +329,7 @@ def _extract_from_ocr(pdf_path: Path, last_n: int) -> Optional[Dict]:
     return None
 
 
-def parse_toc_text(raw_text: str, debug_output_dir: str = None) -> Optional[Dict]:
+def parse_toc_text(raw_text: str, debug_output_dir: str = None, keywords: List[str] = None) -> Optional[Dict]:
     """
     Parse TABLE DES PLANCHES from raw text with improved multi-page support.
     
@@ -318,23 +341,48 @@ def parse_toc_text(raw_text: str, debug_output_dir: str = None) -> Optional[Dict
         Dictionary with parsed plates data or None if not found
     """
     if not raw_text or len(raw_text.strip()) < 50:
+        logger.debug(f"❌ parse_toc_text: Texte trop court ({len(raw_text) if raw_text else 0} caractères)")
         return None
+    
+    logger.debug(f"🔍 parse_toc_text: Analyse d'un texte de {len(raw_text)} caractères")
+    logger.debug(f"📝 Premiers 300 caractères: {raw_text[:300]}")
     
     # Normalize text for matching
     normalized_text = unicodedata.normalize('NFKD', raw_text).encode('ascii', 'ignore').decode()
+    logger.debug(f"🔤 Texte normalisé: {len(normalized_text)} caractères")
     
     # Detect TABLE DES PLANCHES heading (plus flexible)
-    heading_patterns = [
-        r'^\s*TABLE\s+DES\s+PLANCHES\s*$',
-        r'^\s*TABLE\s+DES\s+PLANCHES\s*\d{4}\s*$',  # Avec année
-        r'TABLE\s+DES\s+PLANCHES',  # Plus permissif
-    ]
+    # Utiliser les mots-clés personnalisés si fournis
+    if keywords:
+        logger.debug(f"🔍 Utilisation des mots-clés personnalisés: {keywords}")
+        heading_patterns = []
+        for keyword in keywords:
+            # Créer des patterns flexibles pour chaque mot-clé
+            escaped_keyword = re.escape(keyword.upper())
+            heading_patterns.extend([
+                rf'^\s*{escaped_keyword}\s*$',
+                rf'^\s*{escaped_keyword}\s*\d{{4}}\s*$',  # Avec année
+                rf'{escaped_keyword}',  # Plus permissif
+            ])
+    else:
+        logger.debug("🔍 Utilisation des patterns par défaut (Picasso)")
+        # Patterns par défaut (Picasso)
+        heading_patterns = [
+            r'^\s*TABLE\s+DES\s+PLANCHES\s*$',
+            r'^\s*TABLE\s+DES\s+PLANCHES\s*\d{4}\s*$',  # Avec année
+            r'TABLE\s+DES\s+PLANCHES',  # Plus permissif
+        ]
     
+    logger.debug(f"🔍 Test de {len(heading_patterns)} patterns de titre")
     heading_match = None
-    for pattern in heading_patterns:
+    for i, pattern in enumerate(heading_patterns):
+        logger.debug(f"🔍 Pattern {i+1}: {pattern}")
         heading_match = re.search(pattern, normalized_text, re.IGNORECASE | re.MULTILINE)
         if heading_match:
+            logger.debug(f"✅ Match trouvé avec pattern {i+1}: {heading_match.group()}")
             break
+        else:
+            logger.debug(f"❌ Pas de match avec pattern {i+1}")
     
     if not heading_match:
         # Vérifier si on est dans une page de continuation du sommaire
