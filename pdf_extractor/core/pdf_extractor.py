@@ -158,23 +158,24 @@ class PDFExtractor:
                 finally:
                     # Restaurer le niveau de log original
                     logger.logger.setLevel(original_level)
-            if toc_data:
-                plate_map = build_plate_map(toc_data)
-                save_toc_json(toc_data, self.session_dir)
-                logger.info(f"📋 {len(plate_map)} planches mappées")
                 
-                # Extraire le nom de l'artiste depuis le PDF
-                artist_name = extract_artist_name_from_pdf(pdf_path)
-                logger.info(f"🎨 Artiste détecté: {artist_name}")
-                
-                # Afficher les pages disponibles
-                pages_with_plates = [p['page'] for p in toc_data['plates'] if p['page'] is not None]
-                if pages_with_plates:
-                    logger.info(f"📄 Pages contenant des planches: {sorted(set(pages_with_plates))}")
-            else:
-                logger.info("ℹ️ Aucune TABLE DES PLANCHES trouvée")
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur extraction TOC: {e}")
+                if toc_data:
+                    plate_map = build_plate_map(toc_data)
+                    save_toc_json(toc_data, self.session_dir)
+                    logger.info(f"📋 {len(plate_map)} planches mappées")
+                    
+                    # Extraire le nom de l'artiste depuis le PDF
+                    artist_name = extract_artist_name_from_pdf(pdf_path)
+                    logger.info(f"🎨 Artiste détecté: {artist_name}")
+                    
+                    # Afficher les pages disponibles
+                    pages_with_plates = [p['page'] for p in toc_data['plates'] if p['page'] is not None]
+                    if pages_with_plates:
+                        logger.info(f"📄 Pages contenant des planches: {sorted(set(pages_with_plates))}")
+                else:
+                    logger.info("ℹ️ Aucune TABLE DES PLANCHES trouvée")
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur extraction TOC: {e}")
         else:
             if self.skip_toc_search:
                 logger.info(f"⚡ Recherche sommaire DÉSACTIVÉE (mode rapide)")
@@ -893,8 +894,8 @@ class PDFExtractor:
                         b = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 9)
                         results.append(b)
                     elif prep_type == 'clahe_otsu':
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-                g2 = clahe.apply(gray)
+                        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                        g2 = clahe.apply(gray)
                         _, b = cv2.threshold(g2, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                         results.append(b)
                     elif prep_type == 'gaussian_blur_otsu':

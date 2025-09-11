@@ -684,6 +684,69 @@
             }
         }
 
+        /* Form Styles */
+        .edit-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-weight: 500;
+            color: var(--neutral-700);
+            font-size: 0.875rem;
+        }
+
+        .form-input {
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--neutral-300);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            color: var(--neutral-900);
+            background: white;
+            transition: all 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+        }
+
+        .form-range {
+            width: 100%;
+            margin: 0.5rem 0;
+        }
+
+        /* Crop Container */
+        .crop-overlay {
+            position: absolute;
+            border: 2px dashed var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+            cursor: move;
+        }
+
+        .crop-handle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border: 2px solid white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .crop-handle.nw { top: -4px; left: -4px; cursor: nw-resize; }
+        .crop-handle.ne { top: -4px; right: -4px; cursor: ne-resize; }
+        .crop-handle.sw { bottom: -4px; left: -4px; cursor: sw-resize; }
+        .crop-handle.se { bottom: -4px; right: -4px; cursor: se-resize; }
+
         @media (max-width: 640px) {
             .header-content {
                 flex-direction: column;
@@ -908,6 +971,140 @@
                 <i data-lucide="x"></i>
             </button>
             <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <!-- Modal for Image Editing/Cropping -->
+    <div id="editModal" class="modal">
+        <div class="modal-content" style="max-width: 1200px; width: 95%;">
+            <button class="modal-close" onclick="closeEditModal()">
+                <i data-lucide="x"></i>
+            </button>
+            <div id="editModalContent">
+                <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="edit"></i>
+                    Edit Artwork
+                </h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 400px; gap: 2rem; height: 600px;">
+                    <!-- Zone d'image avec crop -->
+                    <div style="display: flex; flex-direction: column;">
+                        <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="font-weight: 600; color: var(--neutral-700);">Image & Cropping</h3>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button id="cropFromPageBtn" class="btn btn-primary" onclick="cropFromFullPage()">
+                                    <i data-lucide="crop"></i>
+                                    Crop from Full Page
+                                </button>
+                                <button id="resetCropBtn" class="btn btn-secondary" onclick="resetCrop()">
+                                    <i data-lucide="rotate-ccw"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="cropContainer" style="flex: 1; border: 1px solid var(--neutral-300); border-radius: 8px; overflow: hidden; position: relative; background: var(--neutral-50);">
+                            <img id="cropImage" style="max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: auto;">
+                            <!-- Canvas pour le crop sera ajouté ici -->
+                        </div>
+                    </div>
+                    
+                    <!-- Formulaire d'édition -->
+                    <div style="display: flex; flex-direction: column;">
+                        <h3 style="font-weight: 600; color: var(--neutral-700); margin-bottom: 1rem;">Artwork Details</h3>
+                        
+                        <div style="flex: 1; overflow-y: auto; padding-right: 0.5rem;">
+                            <div class="edit-form">
+                                <!-- Informations de base -->
+                                <div class="form-group">
+                                    <label>Artwork Number</label>
+                                    <input type="text" id="editArtworkNumber" class="form-input">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Title</label>
+                                    <input type="text" id="editTitle" class="form-input">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Artist</label>
+                                    <input type="text" id="editArtist" class="form-input">
+                                </div>
+                                
+                                <!-- Spécifique Dubuffet -->
+                                <div id="dubuffetFields" style="display: none;">
+                                    <div class="form-group">
+                                        <label>Medium</label>
+                                        <input type="text" id="editMedium" class="form-input">
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label>Date</label>
+                                        <input type="text" id="editDate" class="form-input">
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label>Dimensions (cm)</label>
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                                            <input type="number" id="editWidth" placeholder="Width" class="form-input">
+                                            <input type="number" id="editHeight" placeholder="Height" class="form-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Spécifique Picasso -->
+                                <div id="picassoFields" style="display: none;">
+                                    <div class="form-group">
+                                        <label>Catalog Page</label>
+                                        <input type="number" id="editCatalogPage" class="form-input">
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label>Raw Catalog Line</label>
+                                        <textarea id="editRawLine" class="form-input" rows="3"></textarea>
+                                    </div>
+                                </div>
+                                
+                                <!-- Informations techniques -->
+                                <div class="form-group">
+                                    <label>Confidence</label>
+                                    <input type="range" id="editConfidence" min="0" max="1" step="0.01" class="form-range">
+                                    <span id="confidenceValue">0.5</span>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>Detection Method</label>
+                                    <select id="editMethod" class="form-input">
+                                        <option value="ultra_detector">Ultra Detector</option>
+                                        <option value="template_detector">Template Detector</option>
+                                        <option value="color_detector">Color Detector</option>
+                                        <option value="manual">Manual</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="editIsDoubtful"> 
+                                        Mark as doubtful
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Boutons d'action -->
+                        <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--neutral-200);">
+                            <button onclick="saveArtworkChanges()" class="btn btn-success" style="flex: 1;">
+                                <i data-lucide="save"></i>
+                                Save Changes
+                            </button>
+                            <button onclick="closeEditModal()" class="btn btn-secondary">
+                                <i data-lucide="x"></i>
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1142,9 +1339,10 @@
             
             card.className = `image-card ${state}`;
             
-            // Informations OCR (Dubuffet uniquement)
+            // Informations OCR/Sommaire
             let ocrSection = '';
             if (isDubuffet) {
+                // Section OCR pour Dubuffet (comme avant)
                 if (image.has_ocr) {
                     const confidence = image.ocr_confidence ? `${Math.round(image.ocr_confidence)}%` : 'N/A';
                     const dimensions = image.ocr_dimensions ? 
@@ -1177,10 +1375,50 @@
                         </div>
                     `;
                 }
+            } else {
+                // Section Sommaire pour Picasso
+                if (image.toc_info) {
+                    ocrSection = `
+                        <div class="ocr-info">
+                            <div class="ocr-title">
+                                <i data-lucide="book-open"></i>
+                                ${image.toc_info.title || 'Title from catalog'}
+                            </div>
+                            <div class="ocr-details">
+                                <div><strong>Catalog #:</strong> ${image.toc_info.number || 'N/A'}</div>
+                                <div><strong>Catalog Page:</strong> ${image.toc_info.page || 'N/A'}</div>
+                                ${image.toc_info.raw_line ? `<div style="font-size: 0.75rem; color: var(--neutral-500); margin-top: 0.25rem;"><strong>Source:</strong> ${image.toc_info.raw_line.substring(0, 80)}...</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else if (image.artwork_number) {
+                    ocrSection = `
+                        <div class="ocr-info" style="background: #fef3c7; border-color: #fbbf24;">
+                            <div class="ocr-title" style="color: #92400e;">
+                                <i data-lucide="search"></i>
+                                Artwork #${image.artwork_number} detected
+                            </div>
+                            <div style="color: #92400e; font-size: 0.875rem;">
+                                Number detected but no catalog match found
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    ocrSection = `
+                        <div class="ocr-info" style="background: #f1f5f9; border-color: #cbd5e1;">
+                            <div class="ocr-title" style="color: var(--neutral-600);">
+                                <i data-lucide="image"></i>
+                                Image without catalog reference
+                            </div>
+                        </div>
+                    `;
+                }
             }
             
             card.innerHTML = `
-                <div class="image-preview-container" onclick="showImageModal('${imageId}', '${image.path}', ${JSON.stringify(image).replace(/"/g, '&quot;')})">
+                <div class="image-preview-container" 
+                     onclick="showImageModalByIndex(${index})"
+                     ondblclick="openEditModalByIndex(${index})">
                     <img src="/api/get-image/${image.path}" 
                          alt="${image.filename}" 
                          class="image-preview">
@@ -1218,6 +1456,10 @@
                         <button class="btn btn-warning" onclick="setImageState('${imageId}', 'pending')">
                             <i data-lucide="clock"></i>
                             Pending
+                        </button>
+                        <button class="btn btn-primary" onclick="openEditModalByIndex(${index})" style="margin-top: 0.5rem; width: 100%;">
+                            <i data-lucide="edit"></i>
+                            Edit
                         </button>
                     </div>
                 </div>
@@ -1289,19 +1531,80 @@
             }
         }
 
-        function setImageState(imageId, state) {
-            imageStates[imageId] = state;
+        async function setImageState(imageId, state) {
+            // Trouver l'image correspondante
+            const imageIndex = pageImages.findIndex(img => `page${currentPage}_${img.filename}` === imageId);
+            if (imageIndex === -1) {
+                showError('Image non trouvée');
+                return;
+            }
             
-            // Mettre à jour visuellement la carte
-            const cards = document.querySelectorAll('.image-card');
-            cards.forEach(card => {
-                const container = card.querySelector('.image-preview-container');
-                if (container && container.onclick.toString().includes(imageId)) {
-                    card.className = `image-card ${state}`;
+            const image = pageImages[imageIndex];
+            
+            try {
+                // Sauvegarder l'état via l'API (comme un "Save Changes" automatique)
+                const formData = {
+                    imageId: imageId,
+                    imagePath: image.path,
+                    artworkNumber: image.artwork_number || '',
+                    title: image.ocr_title || image.toc_info?.title || '',
+                    artist: isDubuffet ? 'Jean Dubuffet' : 'Pablo Picasso',
+                    confidence: image.confidence,
+                    detectionMethod: image.detection_method,
+                    isDoubtful: image.is_doubtful,
+                    validationState: state, // Nouveau champ pour l'état de validation
+                    cropData: null // Pas de crop pour les validations rapides
+                };
+                
+                // Ajouter les champs spécifiques selon la collection
+                if (isDubuffet) {
+                    formData.medium = image.ocr_medium || '';
+                    formData.date = image.ocr_date || '';
+                    formData.width = image.ocr_dimensions?.width || '';
+                    formData.height = image.ocr_dimensions?.height || '';
+                } else {
+                    formData.catalogPage = image.toc_info?.page || '';
+                    formData.rawLine = image.toc_info?.raw_line || '';
                 }
-            });
-            
-            updateValidationStats();
+                
+                // Envoyer au serveur
+                const response = await fetch('/api/save-artwork-changes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Mettre à jour l'état local seulement si la sauvegarde a réussi
+                    imageStates[imageId] = state;
+                    
+                    // Mettre à jour visuellement la carte
+                    const cards = document.querySelectorAll('.image-card');
+                    cards.forEach(card => {
+                        const container = card.querySelector('.image-preview-container');
+                        if (container && container.onclick.toString().includes(imageId)) {
+                            card.className = `image-card ${state}`;
+                        }
+                    });
+                    
+                    updateValidationStats();
+                    
+                    // Message de succès discret
+                    const stateLabels = {
+                        'validated': 'validée',
+                        'rejected': 'rejetée', 
+                        'pending': 'en attente'
+                    };
+                    showSuccess(`Image ${stateLabels[state]} et sauvegardée!`);
+                } else {
+                    showError('Erreur sauvegarde: ' + result.error);
+                }
+                
+            } catch (error) {
+                showError('Erreur de connexion: ' + error.message);
+            }
         }
 
         function updateValidationStats() {
@@ -1332,7 +1635,12 @@
             const modal = document.getElementById('imageModal');
             const content = document.getElementById('modalContent');
             
-            const image = JSON.parse(imageData.replace(/&quot;/g, '"'));
+            let image;
+            if (typeof imageData === 'string') {
+                image = JSON.parse(imageData.replace(/&quot;/g, '"'));
+            } else {
+                image = imageData;
+            }
             
             let ocrDetails = '';
             if (isDubuffet && image.has_ocr) {
@@ -1363,6 +1671,50 @@
                         <div style="color: #991b1b;">This image has no associated OCR data.</div>
                     </div>
                 `;
+            } else if (!isDubuffet) {
+                // Informations sommaire pour Picasso
+                if (image.toc_info) {
+                    ocrDetails = `
+                        <div class="ocr-info">
+                            <div class="ocr-title">
+                                <i data-lucide="book-open"></i>
+                                Catalog Information
+                            </div>
+                            <div class="ocr-details">
+                                <div><strong>Title:</strong> ${image.toc_info.title || 'Not found in catalog'}</div>
+                                <div><strong>Catalog Number:</strong> ${image.toc_info.number || 'N/A'}</div>
+                                <div><strong>Catalog Page:</strong> ${image.toc_info.page || 'N/A'}</div>
+                                <div><strong>Pattern Used:</strong> ${image.toc_info.pattern_used || 'N/A'}</div>
+                                ${image.toc_info.raw_line ? `<div style="margin-top: 0.75rem;"><strong>Source Line:</strong><br><span style="font-family: monospace; font-size: 0.75rem; background: var(--neutral-100); padding: 0.25rem; border-radius: 4px; display: block; margin-top: 0.25rem;">${image.toc_info.raw_line}</span></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else if (image.artwork_number) {
+                    ocrDetails = `
+                        <div class="ocr-info" style="background: #fef3c7; border-color: #fbbf24;">
+                            <div class="ocr-title" style="color: #92400e;">
+                                <i data-lucide="search"></i>
+                                Artwork Number Detected
+                            </div>
+                            <div style="color: #92400e;">
+                                <div><strong>Detected Number:</strong> ${image.artwork_number}</div>
+                                <div style="margin-top: 0.5rem; font-size: 0.875rem;">Number found but no match in catalog</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    ocrDetails = `
+                        <div class="ocr-info" style="background: #f1f5f9; border-color: #cbd5e1;">
+                            <div class="ocr-title" style="color: var(--neutral-600);">
+                                <i data-lucide="image"></i>
+                                No Catalog Reference
+                            </div>
+                            <div style="color: var(--neutral-600); font-size: 0.875rem;">
+                                This image has no catalog number or reference detected.
+                            </div>
+                        </div>
+                    `;
+                }
             }
             
             content.innerHTML = `
@@ -1552,6 +1904,257 @@
                     successDiv.parentNode.removeChild(successDiv);
                 }
             }, 3000);
+        }
+
+        // Variables globales pour l'édition
+        let currentEditImage = null;
+        let cropData = null;
+
+        function showImageModalByIndex(index) {
+            if (!pageImages[index]) return;
+            const image = pageImages[index];
+            const imageId = `page${currentPage}_${image.filename}`;
+            showImageModal(imageId, image.path, image);
+        }
+
+        function openEditModalByIndex(index) {
+            if (!pageImages[index]) return;
+            const image = pageImages[index];
+            const imageId = `page${currentPage}_${image.filename}`;
+            openEditModal(imageId, image.path, image);
+        }
+
+        function openEditModal(imageId, imagePath, imageData) {
+            let image;
+            if (typeof imageData === 'string') {
+                image = JSON.parse(imageData.replace(/&quot;/g, '"'));
+            } else {
+                image = imageData;
+            }
+            currentEditImage = { id: imageId, path: imagePath, data: image };
+            
+            // Afficher le modal
+            document.getElementById('editModal').style.display = 'block';
+            
+            // Remplir le formulaire
+            populateEditForm(image);
+            
+            // Charger l'image pour le crop
+            loadImageForCrop(imagePath);
+            
+            // Re-initialiser les icônes
+            lucide.createIcons();
+        }
+
+        function populateEditForm(image) {
+            // Informations de base
+            document.getElementById('editArtworkNumber').value = image.artwork_number || '';
+            document.getElementById('editArtist').value = isDubuffet ? 'Jean Dubuffet' : 'Pablo Picasso';
+            
+            // Champs spécifiques selon la collection
+            if (isDubuffet) {
+                document.getElementById('dubuffetFields').style.display = 'block';
+                document.getElementById('picassoFields').style.display = 'none';
+                
+                document.getElementById('editTitle').value = image.ocr_title || '';
+                document.getElementById('editMedium').value = image.ocr_medium || '';
+                document.getElementById('editDate').value = image.ocr_date || '';
+                
+                if (image.ocr_dimensions) {
+                    document.getElementById('editWidth').value = image.ocr_dimensions.width || '';
+                    document.getElementById('editHeight').value = image.ocr_dimensions.height || '';
+                }
+            } else {
+                document.getElementById('dubuffetFields').style.display = 'none';
+                document.getElementById('picassoFields').style.display = 'block';
+                
+                if (image.toc_info) {
+                    document.getElementById('editTitle').value = image.toc_info.title || '';
+                    document.getElementById('editCatalogPage').value = image.toc_info.page || '';
+                    document.getElementById('editRawLine').value = image.toc_info.raw_line || '';
+                } else {
+                    document.getElementById('editTitle').value = '';
+                }
+            }
+            
+            // Informations techniques
+            document.getElementById('editConfidence').value = image.confidence || 0.5;
+            document.getElementById('confidenceValue').textContent = (image.confidence || 0.5).toFixed(2);
+            document.getElementById('editMethod').value = image.detection_method || 'ultra_detector';
+            document.getElementById('editIsDoubtful').checked = image.is_doubtful || false;
+            
+            // Event listener pour le slider de confiance
+            document.getElementById('editConfidence').addEventListener('input', function() {
+                document.getElementById('confidenceValue').textContent = parseFloat(this.value).toFixed(2);
+            });
+        }
+
+        function loadImageForCrop(imagePath) {
+            const cropImage = document.getElementById('cropImage');
+            cropImage.src = `/api/get-image/${imagePath}`;
+            
+            cropImage.onload = function() {
+                // Initialiser les données de crop avec l'image entière
+                resetCrop();
+            };
+        }
+
+        function cropFromFullPage() {
+            if (!currentEditImage) return;
+            
+            // Charger la page PDF complète pour le crop
+            const cropImage = document.getElementById('cropImage');
+            cropImage.src = `/api/get-pdf-page/${currentPage}`;
+            
+            cropImage.onload = function() {
+                // Initialiser l'outil de crop sur la page complète
+                initializeCropTool();
+                showSuccess('Click and drag to select the artwork area on the full page');
+            };
+        }
+
+        function initializeCropTool() {
+            const container = document.getElementById('cropContainer');
+            const image = document.getElementById('cropImage');
+            
+            // Supprimer les anciens overlays
+            const existingOverlays = container.querySelectorAll('.crop-overlay');
+            existingOverlays.forEach(overlay => overlay.remove());
+            
+            let isDrawing = false;
+            let startX, startY;
+            let cropOverlay = null;
+            
+            container.addEventListener('mousedown', function(e) {
+                if (e.target === image) {
+                    isDrawing = true;
+                    const rect = image.getBoundingClientRect();
+                    startX = e.clientX - rect.left;
+                    startY = e.clientY - rect.top;
+                    
+                    // Créer l'overlay de crop
+                    cropOverlay = document.createElement('div');
+                    cropOverlay.className = 'crop-overlay';
+                    cropOverlay.style.left = startX + 'px';
+                    cropOverlay.style.top = startY + 'px';
+                    cropOverlay.style.width = '0px';
+                    cropOverlay.style.height = '0px';
+                    container.appendChild(cropOverlay);
+                }
+            });
+            
+            container.addEventListener('mousemove', function(e) {
+                if (isDrawing && cropOverlay) {
+                    const rect = image.getBoundingClientRect();
+                    const currentX = e.clientX - rect.left;
+                    const currentY = e.clientY - rect.top;
+                    
+                    const width = Math.abs(currentX - startX);
+                    const height = Math.abs(currentY - startY);
+                    const left = Math.min(currentX, startX);
+                    const top = Math.min(currentY, startY);
+                    
+                    cropOverlay.style.left = left + 'px';
+                    cropOverlay.style.top = top + 'px';
+                    cropOverlay.style.width = width + 'px';
+                    cropOverlay.style.height = height + 'px';
+                }
+            });
+            
+            container.addEventListener('mouseup', function(e) {
+                if (isDrawing) {
+                    isDrawing = false;
+                    
+                    // Sauvegarder les données de crop
+                    if (cropOverlay) {
+                        const rect = image.getBoundingClientRect();
+                        cropData = {
+                            x: parseInt(cropOverlay.style.left),
+                            y: parseInt(cropOverlay.style.top),
+                            width: parseInt(cropOverlay.style.width),
+                            height: parseInt(cropOverlay.style.height),
+                            imageWidth: image.naturalWidth,
+                            imageHeight: image.naturalHeight,
+                            displayWidth: rect.width,
+                            displayHeight: rect.height
+                        };
+                        
+                        showSuccess('Crop area selected! Click "Save Changes" to apply.');
+                    }
+                }
+            });
+        }
+
+        function resetCrop() {
+            if (!currentEditImage) return;
+            
+            // Recharger l'image originale
+            const cropImage = document.getElementById('cropImage');
+            cropImage.src = `/api/get-image/${currentEditImage.path}`;
+            
+            // Supprimer les overlays de crop
+            const container = document.getElementById('cropContainer');
+            const overlays = container.querySelectorAll('.crop-overlay');
+            overlays.forEach(overlay => overlay.remove());
+            
+            cropData = null;
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+            currentEditImage = null;
+            cropData = null;
+        }
+
+        async function saveArtworkChanges() {
+            if (!currentEditImage) return;
+            
+            try {
+                // Collecter les données du formulaire
+                const formData = {
+                    imageId: currentEditImage.id,
+                    imagePath: currentEditImage.path,
+                    artworkNumber: document.getElementById('editArtworkNumber').value,
+                    title: document.getElementById('editTitle').value,
+                    artist: document.getElementById('editArtist').value,
+                    confidence: parseFloat(document.getElementById('editConfidence').value),
+                    detectionMethod: document.getElementById('editMethod').value,
+                    isDoubtful: document.getElementById('editIsDoubtful').checked,
+                    cropData: cropData
+                };
+                
+                // Ajouter les champs spécifiques
+                if (isDubuffet) {
+                    formData.medium = document.getElementById('editMedium').value;
+                    formData.date = document.getElementById('editDate').value;
+                    formData.width = document.getElementById('editWidth').value;
+                    formData.height = document.getElementById('editHeight').value;
+                } else {
+                    formData.catalogPage = document.getElementById('editCatalogPage').value;
+                    formData.rawLine = document.getElementById('editRawLine').value;
+                }
+                
+                // Envoyer au serveur
+                const response = await fetch('/api/save-artwork-changes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Artwork changes saved successfully!');
+                    closeEditModal();
+                    // Recharger les images de la page
+                    loadPageImages();
+                } else {
+                    showError('Save error: ' + result.error);
+                }
+                
+            } catch (error) {
+                showError('Save error: ' + error.message);
+            }
         }
     </script>
 </body>
