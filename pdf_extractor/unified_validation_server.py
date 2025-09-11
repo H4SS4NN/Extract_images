@@ -195,48 +195,70 @@ class UnifiedValidationServer:
             
             images.append(image_info)
         
-        # Scanner le dossier DOUTEUX
-        doubtful_dir = os.path.join(page_dir, "DOUTEUX")
-        if os.path.exists(doubtful_dir):
-            for img_file in glob.glob(os.path.join(doubtful_dir, "DOUTEUX_*.png")):
-                filename = os.path.basename(img_file)
-                base_filename = filename.replace("DOUTEUX_", "")
+        # Scanner les dossiers de qualité
+        quality_dirs = [
+            ("DOUTEUX", "DOUTEUX"),  # Ancien format
+            ("qualite_DOUTEUSE", "qualite_DOUTEUSE"),  # Nouveau format
+            ("qualite_OK", "qualite_OK")
+        ]
+        
+        for dir_name, folder_label in quality_dirs:
+            quality_dir = os.path.join(page_dir, dir_name)
+            if os.path.exists(quality_dir):
+                # Pattern de fichiers selon le dossier
+                if dir_name in ["DOUTEUX", "qualite_DOUTEUSE"]:
+                    pattern = "*.png"  # Tous les PNG dans ces dossiers
+                else:
+                    pattern = "*.png"  # Tous les PNG
                 
-                # Chercher le fichier info correspondant
-                info_file = os.path.join(doubtful_dir, base_filename.replace('.png', '_INFO.txt'))
-                doubt_info = ""
-                if os.path.exists(info_file):
-                    try:
-                        with open(info_file, 'r', encoding='utf-8') as f:
-                            doubt_info = f.read()
-                    except:
-                        pass
-                
-                # Trouver les détails correspondants
-                details = next((r for r in rectangles_details if r.get('filename') == filename), {})
-                
-                # Pour les images douteuses, ajouter aussi les infos du sommaire si Picasso
-                toc_info_doubtful = None
-                if not is_dubuffet and details.get('artwork_number'):
-                    toc_info_doubtful = self._get_toc_info_for_artwork(session_path, details.get('artwork_number'))
-                
-                images.append({
-                    'filename': filename,
-                    'path': os.path.relpath(img_file, EXTRACTIONS_DIR),
-                    'is_doubtful': True,
-                    'confidence': details.get('confidence', 0.5),
-                    'doubt_reasons': details.get('doubt_reasons', []),
-                    'doubt_info': doubt_info,
-                    'was_rotated': details.get('was_rotated', False),
-                    'artwork_number': details.get('artwork_number'),
-                    'size_kb': details.get('size_kb', 0),
-                    'detection_method': details.get('detection_method', 'unknown'),
-                    'dimensions': f"{details.get('bbox', {}).get('w', 0)}×{details.get('bbox', {}).get('h', 0)}",
-                    'bbox': details.get('bbox', {}),
-                    'folder': 'DOUTEUX',
-                    'has_ocr': False,
-                    'toc_info': toc_info_doubtful  # Informations du sommaire pour Picasso
-                })
+                for img_file in glob.glob(os.path.join(quality_dir, pattern)):
+                    filename = os.path.basename(img_file)
+                    
+                    # Ignorer les miniatures et debug
+                    if "thumb_" in filename or "ocr_debug" in filename:
+                        continue
+                    
+                    base_filename = filename.replace("DOUTEUX_", "") if filename.startswith("DOUTEUX_") else filename
+                    
+                    # Chercher le fichier info correspondant
+                    info_file = os.path.join(quality_dir, base_filename.replace('.png', '_INFO.txt'))
+                    doubt_info = ""
+                    if os.path.exists(info_file):
+                        try:
+                            with open(info_file, 'r', encoding='utf-8') as f:
+                                doubt_info = f.read()
+                        except:
+                            pass
+                    
+                    # Trouver les détails correspondants
+                    details = next((r for r in rectangles_details if r.get('filename') == base_filename or r.get('filename') == filename), {})
+                    
+                    # Pour les images, ajouter aussi les infos du sommaire si Picasso
+                    toc_info_quality = None
+                    if not is_dubuffet and details.get('artwork_number'):
+                        toc_info_quality = self._get_toc_info_for_artwork(session_path, details.get('artwork_number'))
+                    
+                    # Déterminer si c'est douteux
+                    is_doubtful_image = dir_name in ["DOUTEUX", "qualite_DOUTEUSE"]
+                    
+                    images.append({
+                        'filename': filename,
+                        'path': os.path.relpath(img_file, EXTRACTIONS_DIR),
+                        'is_doubtful': is_doubtful_image,
+                        'confidence': details.get('confidence', 0.5 if is_doubtful_image else 0.9),
+                        'doubt_reasons': details.get('doubt_reasons', []),
+                        'doubt_info': doubt_info,
+                        'was_rotated': details.get('was_rotated', False),
+                        'artwork_number': details.get('artwork_number'),
+                        'size_kb': details.get('size_kb', 0),
+                        'detection_method': details.get('detection_method', 'unknown'),
+                        'dimensions': f"{details.get('bbox', {}).get('w', 0)}×{details.get('bbox', {}).get('h', 0)}",
+                        'bbox': details.get('bbox', {}),
+                        'folder': folder_label,
+                        'has_ocr': False,
+                        'toc_info': toc_info_quality,  # Informations du sommaire pour Picasso
+                        'validation_status': 'rejected' if is_doubtful_image else 'validated'
+                    })
         
         # Trier par nom de fichier
         images.sort(key=lambda x: x['filename'])
@@ -388,7 +410,7 @@ class UnifiedValidationServer:
             return False
     
     def apply_crop_to_image(self, session_path, image_path, crop_data):
-        """Appliquer un crop à une image"""
+        """Appliquer un crop à une image avec coordonnées précises et logs détaillés"""
         try:
             import cv2
             import numpy as np
@@ -396,10 +418,14 @@ class UnifiedValidationServer:
             import shutil
             import re
             
-            print(f"🔧 Crop data received: {crop_data}")
+            print(f"\n🔧 ===== DÉBUT CROP =====")
+            print(f"📂 Session: {session_path}")
+            print(f"🖼️ Image path: {image_path}")
+            print(f"📊 Crop data reçu: {crop_data}")
             
             # Chemins des fichiers
             full_image_path = os.path.join(EXTRACTIONS_DIR, image_path)
+            print(f"📁 Chemin complet: {full_image_path}")
             
             if not os.path.exists(full_image_path):
                 print(f"❌ Image non trouvée: {full_image_path}")
@@ -413,65 +439,215 @@ class UnifiedValidationServer:
             
             # Calculer les coordonnées réelles du crop
             img_height, img_width = image.shape[:2]
-            print(f"📏 Image originale: {img_width}x{img_height}")
+            print(f"📏 Image actuelle sur disque: {img_width}x{img_height}")
             
-            # Coordonnées du crop (normalisées par rapport à l'image affichée)
-            display_width = crop_data.get('displayWidth', img_width)
-            display_height = crop_data.get('displayHeight', img_height)
+            # Gérer le backup et la restauration AVANT le crop
+            backup_path = full_image_path + '.backup'
             
-            # Facteurs de mise à l'échelle
-            scale_x = img_width / display_width
-            scale_y = img_height / display_height
+            # Si l'image actuelle est significativement différente des dimensions attendues,
+            # restaurer depuis le backup
+            original_img_w = crop_data.get('originalImageWidth', img_width)
+            original_img_h = crop_data.get('originalImageHeight', img_height)
             
-            print(f"🔄 Facteurs d'échelle: x={scale_x:.2f}, y={scale_y:.2f}")
+            # Calculer les ratios de différence
+            width_ratio = img_width / original_img_w if original_img_w > 0 else 1
+            height_ratio = img_height / original_img_h if original_img_h > 0 else 1
             
-            # Coordonnées réelles du crop
-            x = int(crop_data['x'] * scale_x)
-            y = int(crop_data['y'] * scale_y)
-            w = int(crop_data['width'] * scale_x)
-            h = int(crop_data['height'] * scale_y)
+            # Si l'image est très différente (probablement déjà croppée), restaurer
+            should_restore = (
+                img_width < 100 or img_height < 100 or  # Trop petite
+                width_ratio < 0.8 or height_ratio < 0.8 or  # Trop différente
+                abs(width_ratio - height_ratio) > 0.3  # Ratio d'aspect très différent
+            )
             
-            # Valider les coordonnées
+            if should_restore and os.path.exists(backup_path):
+                print(f"🔄 Image actuelle ({img_width}x{img_height}) différente de l'attendu ({original_img_w}x{original_img_h})")
+                print(f"🔄 Ratios: width={width_ratio:.3f}, height={height_ratio:.3f} - Restauration depuis backup...")
+                
+                shutil.copy2(backup_path, full_image_path)
+                
+                # Recharger l'image restaurée
+                image = cv2.imread(full_image_path)
+                if image is None:
+                    print(f"❌ Impossible de charger l'image restaurée")
+                    return False
+                
+                img_height, img_width = image.shape[:2]
+                print(f"✅ Image restaurée: {img_width}x{img_height}")
+            elif should_restore and not os.path.exists(backup_path):
+                print(f"❌ Image différente de l'attendu mais pas de backup disponible!")
+                print(f"   Actuel: {img_width}x{img_height}, Attendu: {original_img_w}x{original_img_h}")
+                # Continuer quand même avec l'image actuelle
+            else:
+                print(f"✅ Image actuelle compatible avec les dimensions attendues")
+            
+            # Créer le backup si il n'existe pas
+            if not os.path.exists(backup_path):
+                shutil.copy2(full_image_path, backup_path)
+                print(f"💾 Backup créé: {backup_path}")
+            else:
+                print(f"💾 Backup existe: {backup_path}")
+            
+            # Analyser les données de crop reçues (déjà lu plus haut)
+            display_img_w = crop_data.get('displayImageWidth', original_img_w)
+            display_img_h = crop_data.get('displayImageHeight', original_img_h)
+            
+            print(f"📐 Dimensions frontend - Original: {original_img_w}x{original_img_h}")
+            print(f"📐 Dimensions frontend - Display: {display_img_w}x{display_img_h}")
+            
+            # Les coordonnées du crop sont déjà en pixels réels selon le frontend
+            x = int(crop_data.get('x', 0))
+            y = int(crop_data.get('y', 0))
+            w = int(crop_data.get('width', img_width))
+            h = int(crop_data.get('height', img_height))
+            
+            print(f"🎯 Coordonnées crop brutes: x={x}, y={y}, w={w}, h={h}")
+            
+            # Gérer les coordonnées selon la source du crop
+            crop_source = crop_data.get('cropSource', 'unknown')
+            print(f"🎯 Source du crop: {crop_source}")
+            
+            if crop_source == 'pdf_page':
+                # Les coordonnées viennent de la page PDF, cropper directement sur la page PDF
+                print(f"📄 Crop depuis page PDF - crop direct sur PDF")
+                
+                # Essayer de cropper directement sur la page PDF
+                pdf_crop_success = self._crop_from_pdf_page(session_path, image_path, crop_data)
+                
+                if pdf_crop_success:
+                    print(f"✅ Crop direct depuis PDF réussi")
+                    return True
+                else:
+                    print(f"⚠️ Crop direct PDF échoué, fallback sur conversion backup")
+                    
+                    # Fallback : essayer de lire les vraies dimensions
+                    real_pdf_width, real_pdf_height = self._get_real_pdf_dimensions(session_path, image_path)
+                    
+                    if real_pdf_width and real_pdf_height:
+                        print(f"📐 Vraies dimensions PDF: {real_pdf_width}x{real_pdf_height}")
+                        print(f"📐 Image backup: {img_width}x{img_height}")
+                        
+                        # Calculer les facteurs de conversion réels PDF -> Backup
+                        pdf_to_backup_x = img_width / real_pdf_width
+                        pdf_to_backup_y = img_height / real_pdf_height
+                        
+                        print(f"🔄 Facteurs PDF->Backup réels: x={pdf_to_backup_x:.3f}, y={pdf_to_backup_y:.3f}")
+                        
+                        # Convertir les coordonnées
+                        x = int(x * pdf_to_backup_x)
+                        y = int(y * pdf_to_backup_y)
+                        w = int(w * pdf_to_backup_x)
+                        h = int(h * pdf_to_backup_y)
+                        
+                        print(f"🔧 Coordonnées converties avec vraies dimensions: x={x}, y={y}, w={w}, h={h}")
+                    else:
+                        print(f"⚠️ Impossible de lire les vraies dimensions, abandon crop PDF")
+            elif crop_source == 'backup_image':
+                # Les coordonnées viennent du backup, vérifier la cohérence
+                if img_width == original_img_w and img_height == original_img_h:
+                    print(f"✅ Dimensions cohérentes avec le backup")
+                else:
+                    print(f"⚠️ ATTENTION: Dimensions différentes du backup!")
+                    print(f"   Backup attendu: {original_img_w}x{original_img_h}")
+                    print(f"   Image réelle: {img_width}x{img_height}")
+                    
+                    # Calculer les facteurs d'échelle
+                    scale_x = img_width / original_img_w if original_img_w > 0 else 1
+                    scale_y = img_height / original_img_h if original_img_h > 0 else 1
+                    
+                    print(f"🔄 Facteurs d'échelle: x={scale_x:.3f}, y={scale_y:.3f}")
+                    
+                    # Ajuster les coordonnées
+                    x = int(x * scale_x)
+                    y = int(y * scale_y)
+                    w = int(w * scale_x)
+                    h = int(h * scale_y)
+                    
+                    print(f"🔧 Coordonnées ajustées: x={x}, y={y}, w={w}, h={h}")
+            else:
+                # Source inconnue, essayer de deviner
+                print(f"❓ Source inconnue, analyse des dimensions...")
+                if abs(img_width - original_img_w) > 100 or abs(img_height - original_img_h) > 100:
+                    print(f"⚠️ Dimensions très différentes, ajustement nécessaire")
+                    scale_x = img_width / original_img_w if original_img_w > 0 else 1
+                    scale_y = img_height / original_img_h if original_img_h > 0 else 1
+                    
+                    x = int(x * scale_x)
+                    y = int(y * scale_y)
+                    w = int(w * scale_x)
+                    h = int(h * scale_y)
+                    
+                    print(f"🔧 Coordonnées ajustées: x={x}, y={y}, w={w}, h={h}")
+            
+            # Valider les coordonnées pour s'assurer qu'elles sont dans les limites
+            x_orig, y_orig, w_orig, h_orig = x, y, w, h
             x = max(0, min(x, img_width - 1))
             y = max(0, min(y, img_height - 1))
             w = max(1, min(w, img_width - x))
             h = max(1, min(h, img_height - y))
             
-            print(f"✂️ Crop coords: x={x}, y={y}, w={w}, h={h}")
+            if x != x_orig or y != y_orig or w != w_orig or h != h_orig:
+                print(f"🔧 Coordonnées corrigées pour limites: x={x}, y={y}, w={w}, h={h}")
+            
+            print(f"✂️ Coordonnées finales: x={x}, y={y}, w={w}, h={h}")
+            print(f"📊 Zone à cropper: {w}x{h} pixels")
+            
+            # Vérifier que la zone de crop est valide
+            if w <= 0 or h <= 0:
+                print("❌ Zone de crop invalide (largeur ou hauteur <= 0)")
+                return False
             
             # Effectuer le crop
+            print(f"✂️ Application du crop...")
             cropped_image = image[y:y+h, x:x+w]
             
-            # Sauvegarder l'image originale si ce n'est pas déjà fait
-            backup_path = full_image_path + '.backup'
-            if not os.path.exists(backup_path):
-                shutil.copy2(full_image_path, backup_path)
-                print(f"💾 Backup créé: {backup_path}")
+            if cropped_image.size == 0:
+                print("❌ Image croppée vide")
+                return False
+            
+            crop_height, crop_width = cropped_image.shape[:2]
+            print(f"📏 Image croppée résultante: {crop_width}x{crop_height}")
             
             # Sauvegarder l'image croppée
+            print(f"💾 Sauvegarde de l'image croppée...")
             success = cv2.imwrite(full_image_path, cropped_image)
             
             if success:
+                # Vérifier la taille du fichier sauvegardé
+                file_size = os.path.getsize(full_image_path)
                 print(f"✅ Image croppée sauvegardée: {full_image_path}")
+                print(f"📊 Taille finale: {file_size:,} bytes")
+                print(f"📐 Dimensions finales: {crop_width}x{crop_height}")
                 
                 # Mettre à jour les métadonnées de l'image
-                self._update_image_crop_metadata(session_path, image_path, {
+                metadata = {
                     'original_size': (img_width, img_height),
                     'crop_coords': (x, y, w, h),
-                    'cropped_size': (w, h),
+                    'cropped_size': (crop_width, crop_height),
                     'crop_applied': True,
-                    'crop_timestamp': datetime.now().isoformat()
-                })
+                    'crop_timestamp': datetime.now().isoformat(),
+                    'crop_data_received': crop_data,
+                    'scale_factors': {
+                        'x': img_width / original_img_w if original_img_w != 0 else 1,
+                        'y': img_height / original_img_h if original_img_h != 0 else 1
+                    }
+                }
+                
+                self._update_image_crop_metadata(session_path, image_path, metadata)
+                print(f"📝 Métadonnées mises à jour")
+                print(f"🔧 ===== FIN CROP RÉUSSI =====\n")
                 
                 return True
             else:
                 print("❌ Erreur lors de la sauvegarde de l'image croppée")
+                print(f"🔧 ===== FIN CROP ÉCHOUÉ =====\n")
                 return False
                 
         except Exception as e:
             print(f"❌ Erreur crop: {e}")
             import traceback
             traceback.print_exc()
+            print(f"🔧 ===== FIN CROP ERREUR =====\n")
             return False
     
     def update_dubuffet_artwork(self, session_path, image_path, artwork_number, title, artist, 
@@ -723,8 +899,8 @@ class UnifiedValidationServer:
             print(f"❌ Erreur mise à jour sommaire Picasso: {e}")
             return False
     
-    def save_validation_state(self, session_path, image_id, validation_state):
-        """Sauvegarder l'état de validation d'une image"""
+    def save_validation_state(self, session_path, image_id, validation_state, image_path=None, move_file=False):
+        """Sauvegarder l'état de validation d'une image et optionnellement déplacer le fichier"""
         try:
             # Fichier pour stocker les états de validation
             validation_file = os.path.join(session_path, "validation_states.json")
@@ -745,6 +921,12 @@ class UnifiedValidationServer:
                 'validated_by': 'manual_validation'
             }
             
+            # Déplacer le fichier si demandé
+            if move_file and image_path:
+                move_success = self._move_image_based_on_validation(session_path, image_path, validation_state)
+                validation_states[image_id]['file_moved'] = move_success
+                validation_states[image_id]['new_path'] = image_path if move_success else None
+            
             # Sauvegarder
             with open(validation_file, 'w', encoding='utf-8') as f:
                 json.dump(validation_states, f, indent=2, ensure_ascii=False)
@@ -754,6 +936,296 @@ class UnifiedValidationServer:
             
         except Exception as e:
             print(f"❌ Erreur sauvegarde état validation: {e}")
+            return False
+    
+    def _move_image_based_on_validation(self, session_path, image_path, validation_state):
+        """Déplacer une image selon son état de validation"""
+        try:
+            import shutil
+            
+            # Chemin complet de l'image
+            full_image_path = os.path.join(EXTRACTIONS_DIR, image_path)
+            
+            if not os.path.exists(full_image_path):
+                print(f"❌ Image non trouvée pour déplacement: {full_image_path}")
+                return False
+            
+            # Extraire les informations du chemin
+            path_parts = image_path.replace('\\', '/').split('/')
+            page_dir = None
+            filename = None
+            
+            for i, part in enumerate(path_parts):
+                if part.startswith('page_'):
+                    page_dir = part
+                    if i + 1 < len(path_parts):
+                        remaining_parts = path_parts[i+1:]
+                        filename = remaining_parts[-1]  # Dernier élément
+                    break
+            
+            if not page_dir or not filename:
+                print(f"❌ Impossible d'extraire page_dir et filename de: {image_path}")
+                return False
+            
+            page_folder = os.path.join(session_path, page_dir)
+            
+            if validation_state == 'rejected':
+                # Déplacer vers qualité_DOUTEUSE
+                douteux_dir = os.path.join(page_folder, "qualite_DOUTEUSE")
+                os.makedirs(douteux_dir, exist_ok=True)
+                
+                # Nouveau nom avec préfixe DOUTEUX si pas déjà présent
+                new_filename = filename if filename.startswith('DOUTEUX_') else f"DOUTEUX_{filename}"
+                new_path = os.path.join(douteux_dir, new_filename)
+                
+                # Déplacer le fichier
+                shutil.move(full_image_path, new_path)
+                print(f"📦 Image déplacée vers DOUTEUX: {new_path}")
+                
+                # Créer un fichier d'info
+                info_file = new_path.replace('.png', '_INFO.txt')
+                with open(info_file, 'w', encoding='utf-8') as f:
+                    f.write(f"Image rejetée le {datetime.now().isoformat()}\n")
+                    f.write(f"Raison: Validation manuelle - rejetée\n")
+                    f.write(f"Fichier original: {filename}\n")
+                
+                return True
+                
+            elif validation_state == 'validated':
+                # Images validées : RESTER EN PLACE (ne pas déplacer)
+                if 'qualite_DOUTEUSE' in image_path or 'DOUTEUX' in image_path:
+                    # Si l'image était dans DOUTEUX, la sortir et remettre dans le dossier principal
+                    # Enlever le préfixe DOUTEUX du nom
+                    clean_filename = filename.replace('DOUTEUX_', '')
+                    new_path = os.path.join(page_folder, clean_filename)
+                    
+                    # Déplacer vers le dossier principal (pas vers qualité_OK)
+                    shutil.move(full_image_path, new_path)
+                    print(f"↩️ Image validée sortie du dossier douteux vers dossier principal: {new_path}")
+                    
+                    # Supprimer le fichier d'info s'il existe
+                    info_file = full_image_path.replace('.png', '_INFO.txt')
+                    if os.path.exists(info_file):
+                        os.remove(info_file)
+                        print(f"🗑️ Fichier info supprimé: {info_file}")
+                    
+                    return True
+                else:
+                    # L'image est déjà dans le bon dossier (principal), ne pas la déplacer
+                    print(f"📍 Image validée reste dans le dossier principal: {full_image_path}")
+                    return True
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Erreur déplacement image: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _get_real_pdf_dimensions(self, session_path, image_path):
+        """Lire les vraies dimensions de la page PDF depuis les métadonnées"""
+        try:
+            # Extraire les informations du chemin
+            path_parts = image_path.replace('\\', '/').split('/')
+            page_dir = None
+            
+            for part in path_parts:
+                if part.startswith('page_'):
+                    page_dir = part
+                    break
+            
+            if not page_dir:
+                return None, None
+            
+            # Lire les détails de la page
+            page_details_file = os.path.join(session_path, page_dir, "page_ultra_details.json")
+            
+            if os.path.exists(page_details_file):
+                with open(page_details_file, 'r', encoding='utf-8') as f:
+                    page_details = json.load(f)
+                
+                # Chercher les dimensions dans les métadonnées
+                pdf_width = page_details.get('page_width')
+                pdf_height = page_details.get('page_height')
+                
+                if pdf_width and pdf_height:
+                    return int(pdf_width), int(pdf_height)
+                
+                # Essayer de lire depuis image_size
+                image_size = page_details.get('image_size')
+                if image_size and '×' in str(image_size):
+                    try:
+                        w_str, h_str = str(image_size).split('×')
+                        return int(w_str), int(h_str)
+                    except:
+                        pass
+            
+            return None, None
+            
+        except Exception as e:
+            print(f"⚠️ Erreur lecture dimensions PDF: {e}")
+            return None, None
+    
+    def get_extraction_metadata(self, session_path, image_path):
+        """Récupérer les métadonnées d'extraction pour connaître les vraies dimensions"""
+        try:
+            # Extraire les informations du chemin
+            path_parts = image_path.replace('\\', '/').split('/')
+            page_dir = None
+            filename = None
+            
+            for part in path_parts:
+                if part.startswith('page_'):
+                    page_dir = part
+                elif part.endswith('.png'):
+                    filename = part.replace('.png', '')
+                    break
+            
+            if not page_dir or not filename:
+                print(f"⚠️ Impossible d'extraire page_dir ou filename de: {image_path}")
+                return None
+            
+            # Lire les détails de la page
+            details_path = os.path.join(session_path, page_dir, "page_ultra_details.json")
+            if not os.path.exists(details_path):
+                print(f"⚠️ Fichier de détails non trouvé: {details_path}")
+                return None
+            
+            with open(details_path, 'r', encoding='utf-8') as f:
+                details = json.load(f)
+            
+            # Chercher les métadonnées de l'image spécifique
+            for rect in details.get('rectangles_details', []):
+                if rect.get('filename') == filename + '.png':
+                    metadata = {
+                        'source_dimensions': rect.get('crop_metadata', {}).get('source_dimensions', [2620, 4400]),
+                        'page_dimensions': details.get('image_size', '2620×4400').split('×'),
+                        'dpi': details.get('dpi_used', 400),
+                        'original_bbox': rect.get('bbox', {}),
+                        'detection_method': rect.get('detection_method', 'ultra_general'),
+                        'was_cropped': rect.get('was_cropped', False),
+                        'crop_metadata': rect.get('crop_metadata', {})
+                    }
+                    
+                    # Convertir les dimensions en entiers
+                    if len(metadata['source_dimensions']) >= 2:
+                        metadata['page_width'] = int(metadata['source_dimensions'][0])
+                        metadata['page_height'] = int(metadata['source_dimensions'][1])
+                    else:
+                        # Fallback depuis image_size
+                        dims = details.get('image_size', '2620×4400').split('×')
+                        metadata['page_width'] = int(dims[0]) if len(dims) >= 1 else 2620
+                        metadata['page_height'] = int(dims[1]) if len(dims) >= 2 else 4400
+                    
+                    print(f"✅ Métadonnées trouvées pour {filename}: {metadata['page_width']}×{metadata['page_height']}")
+                    return metadata
+            
+            print(f"⚠️ Image {filename} non trouvée dans les détails")
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Erreur lecture métadonnées extraction: {e}")
+            return None
+    
+    def _crop_from_pdf_page(self, session_path, image_path, crop_data):
+        """Cropper directement depuis la page PDF"""
+        try:
+            # Extraire les informations du chemin
+            path_parts = image_path.replace('\\', '/').split('/')
+            page_dir = None
+            
+            for part in path_parts:
+                if part.startswith('page_'):
+                    page_dir = part
+                    break
+            
+            if not page_dir:
+                print("❌ Impossible de trouver le dossier de page")
+                return False
+            
+            # Chercher l'image de la page complète
+            page_folder = os.path.join(session_path, page_dir)
+            page_image_path = os.path.join(page_folder, "page_full_image.jpg")
+            
+            if not os.path.exists(page_image_path):
+                print(f"❌ Image de page complète non trouvée: {page_image_path}")
+                return False
+            
+            print(f"📄 Crop depuis image de page: {page_image_path}")
+            
+            # Charger l'image de la page complète
+            import cv2
+            page_image = cv2.imread(page_image_path)
+            if page_image is None:
+                print(f"❌ Impossible de charger l'image de page")
+                return False
+            
+            page_height, page_width = page_image.shape[:2]
+            print(f"📐 Dimensions page complète: {page_width}x{page_height}")
+            
+            # Extraire les coordonnées de crop
+            x = int(crop_data.get('x', 0))
+            y = int(crop_data.get('y', 0))
+            w = int(crop_data.get('width', page_width))
+            h = int(crop_data.get('height', page_height))
+            
+            print(f"✂️ Coordonnées crop sur page: x={x}, y={y}, w={w}, h={h}")
+            
+            # Valider les coordonnées
+            x = max(0, min(x, page_width - 1))
+            y = max(0, min(y, page_height - 1))
+            w = max(1, min(w, page_width - x))
+            h = max(1, min(h, page_height - y))
+            
+            # Effectuer le crop
+            cropped_page = page_image[y:y+h, x:x+w]
+            
+            if cropped_page.size == 0:
+                print("❌ Zone de crop vide")
+                return False
+            
+            crop_height, crop_width = cropped_page.shape[:2]
+            print(f"📏 Zone croppée: {crop_width}x{crop_height}")
+            
+            # Sauvegarder le résultat
+            full_image_path = os.path.join(EXTRACTIONS_DIR, image_path)
+            
+            # Créer backup si nécessaire
+            backup_path = full_image_path + '.backup'
+            if not os.path.exists(backup_path) and os.path.exists(full_image_path):
+                import shutil
+                shutil.copy2(full_image_path, backup_path)
+                print(f"💾 Backup créé: {backup_path}")
+            
+            # Sauvegarder l'image croppée
+            success = cv2.imwrite(full_image_path, cropped_page)
+            
+            if success:
+                file_size = os.path.getsize(full_image_path)
+                print(f"✅ Crop direct PDF sauvegardé: {full_image_path}")
+                print(f"📊 Taille: {file_size:,} bytes, Dimensions: {crop_width}x{crop_height}")
+                
+                # Mettre à jour les métadonnées
+                self._update_image_crop_metadata(session_path, image_path, {
+                    'crop_source': 'pdf_page',
+                    'original_page_size': (page_width, page_height),
+                    'crop_coords': (x, y, w, h),
+                    'cropped_size': (crop_width, crop_height),
+                    'crop_applied': True,
+                    'crop_timestamp': datetime.now().isoformat(),
+                    'crop_data_received': crop_data
+                })
+                
+                return True
+            else:
+                print("❌ Erreur sauvegarde crop direct PDF")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Erreur crop direct PDF: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 # Instance globale du serveur
@@ -1123,8 +1595,9 @@ def save_artwork_changes():
         
         # Sauvegarder l'état de validation si fourni
         if validation_state:
+            move_file = data.get('moveFile', False)
             validation_success = validation_server.save_validation_state(
-                session_path, image_id, validation_state
+                session_path, image_id, validation_state, image_path, move_file
             )
             if not validation_success:
                 print(f"⚠️ Impossible de sauvegarder l'état de validation: {validation_state}")
@@ -1140,6 +1613,30 @@ def save_artwork_changes():
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/get-extraction-metadata/<path:image_path>', methods=['GET'])
+def get_extraction_metadata(image_path):
+    """Récupérer les métadonnées d'extraction d'une image pour le crop"""
+    try:
+        if not validation_server.current_session:
+            return jsonify({'error': 'No active session'})
+        
+        session_path = validation_server.current_session['path']
+        metadata = validation_server.get_extraction_metadata(session_path, image_path)
+        
+        if metadata:
+            return jsonify({
+                'success': True,
+                'metadata': metadata
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Metadata not found for this image'
+            })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     print("🚀 SERVEUR DE VALIDATION UNIFIÉ")

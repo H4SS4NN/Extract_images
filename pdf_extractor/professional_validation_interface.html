@@ -1335,7 +1335,18 @@
         function createImageCard(image, index) {
             const card = document.createElement('div');
             const imageId = `page${currentPage}_${image.filename}`;
-            const state = imageStates[imageId] || 'pending';
+            
+            // Déterminer l'état selon le dossier et l'état stocké
+            let state = imageStates[imageId] || 'pending';
+            
+            // Si l'image a un statut de validation du serveur, l'utiliser
+            if (image.validation_status) {
+                state = image.validation_status;
+            } else if (image.folder === 'qualite_OK') {
+                state = 'validated';
+            } else if (image.folder === 'qualite_DOUTEUSE' || image.folder === 'DOUTEUX') {
+                state = 'rejected';
+            }
             
             card.className = `image-card ${state}`;
             
@@ -1440,6 +1451,7 @@
                         <div><strong>Weight:</strong> ${image.size_kb} KB</div>
                         <div><strong>Confidence:</strong> ${Math.round(image.confidence * 100)}%</div>
                         <div><strong>Method:</strong> ${image.detection_method}</div>
+                        <div><strong>Folder:</strong> <span style="color: ${image.folder === 'qualite_OK' ? 'var(--success)' : image.folder === 'qualite_DOUTEUSE' || image.folder === 'DOUTEUX' ? 'var(--error)' : 'var(--neutral-600)'};">${image.folder || 'normal'}</span></div>
                     </div>
                     
                     ${image.is_doubtful ? '<div style="background: #fef2f2; color: #991b1b; padding: 0.5rem; border-radius: 6px; font-size: 0.75rem; margin: 0.5rem 0; display: flex; align-items: center; gap: 0.375rem;"><i data-lucide="alert-triangle" style="width: 14px; height: 14px;"></i><strong>Doubtful image</strong></div>' : ''}
@@ -1542,7 +1554,7 @@
             const image = pageImages[imageIndex];
             
             try {
-                // Sauvegarder l'état via l'API (comme un "Save Changes" automatique)
+                // Sauvegarder l'état via l'API avec déplacement physique des fichiers
                 const formData = {
                     imageId: imageId,
                     imagePath: image.path,
@@ -1552,7 +1564,8 @@
                     confidence: image.confidence,
                     detectionMethod: image.detection_method,
                     isDoubtful: image.is_doubtful,
-                    validationState: state, // Nouveau champ pour l'état de validation
+                    validationState: state,
+                    moveFile: true, // Demander le déplacement physique du fichier
                     cropData: null // Pas de crop pour les validations rapides
                 };
                 
@@ -1591,13 +1604,20 @@
                     
                     updateValidationStats();
                     
-                    // Message de succès discret
+                    // Message de succès avec info sur le déplacement
                     const stateLabels = {
-                        'validated': 'validée',
-                        'rejected': 'rejetée', 
-                        'pending': 'en attente'
+                        'validated': 'validée (reste en place)',
+                        'rejected': 'rejetée et déplacée vers DOUTEUX', 
+                        'pending': 'marquée en attente'
                     };
-                    showSuccess(`Image ${stateLabels[state]} et sauvegardée!`);
+                    showSuccess(`Image ${stateLabels[state]}!`);
+                    
+                    // Recharger la page seulement pour les rejets (qui déplacent les fichiers)
+                    if (state === 'rejected') {
+                        setTimeout(() => {
+                            loadPageImages();
+                        }, 1000);
+                    }
                 } else {
                     showError('Erreur sauvegarde: ' + result.error);
                 }
@@ -1991,25 +2011,91 @@
 
         function loadImageForCrop(imagePath) {
             const cropImage = document.getElementById('cropImage');
-            cropImage.src = `/api/get-image/${imagePath}`;
+            
+            // D'abord, essayer de charger l'image backup pour avoir les vraies dimensions
+            const backupPath = imagePath + '.backup';
+            
+            // Test si le backup existe
+            fetch(`/api/get-image/${backupPath}`)
+                .then(response => {
+                    if (response.ok) {
+                        // Le backup existe, l'utiliser comme référence
+                        console.log('Using backup image for crop reference');
+                        cropImage.src = `/api/get-image/${backupPath}`;
+                    } else {
+                        // Pas de backup, utiliser l'image actuelle
+                        console.log('No backup found, using current image');
+                        cropImage.src = `/api/get-image/${imagePath}`;
+                    }
+                })
+                .catch(() => {
+                    // En cas d'erreur, utiliser l'image actuelle
+                    console.log('Error checking backup, using current image');
+                    cropImage.src = `/api/get-image/${imagePath}`;
+                });
             
             cropImage.onload = function() {
+                console.log(`Crop image loaded: ${cropImage.naturalWidth}x${cropImage.naturalHeight}`);
                 // Initialiser les données de crop avec l'image entière
                 resetCrop();
             };
         }
 
-        function cropFromFullPage() {
+        async function cropFromFullPage() {
             if (!currentEditImage) return;
+            
+            try {
+                // Récupérer les métadonnées d'extraction pour avoir les vraies dimensions
+                console.log('🔍 Récupération des métadonnées d\'extraction...');
+                const metadataResponse = await fetch(`/api/get-extraction-metadata/${encodeURIComponent(currentEditImage.path)}`);
+                const metadataResult = await metadataResponse.json();
+                
+                if (metadataResult.success && metadataResult.metadata) {
+                    const metadata = metadataResult.metadata;
+                    console.log('✅ Métadonnées d\'extraction récupérées:', metadata);
+                    
+                    // Stocker les vraies dimensions pour le crop
+                    window.extractionMetadata = {
+                        pageWidth: metadata.page_width,
+                        pageHeight: metadata.page_height,
+                        dpi: metadata.dpi,
+                        originalBbox: metadata.original_bbox,
+                        wasCropped: metadata.was_cropped
+                    };
+                    
+                    console.log(`📐 Vraies dimensions de la page: ${metadata.page_width}×${metadata.page_height}`);
+                } else {
+                    console.warn('⚠️ Métadonnées d\'extraction non trouvées, utilisation des dimensions par défaut');
+                    // Fallback sur les dimensions par défaut
+                    window.extractionMetadata = {
+                        pageWidth: 2620,
+                        pageHeight: 4400,
+                        dpi: 400
+                    };
+                }
+            } catch (error) {
+                console.error('❌ Erreur récupération métadonnées:', error);
+                // Fallback sur les dimensions par défaut
+                window.extractionMetadata = {
+                    pageWidth: 2620,
+                    pageHeight: 4400,
+                    dpi: 400
+                };
+            }
             
             // Charger la page PDF complète pour le crop
             const cropImage = document.getElementById('cropImage');
             cropImage.src = `/api/get-pdf-page/${currentPage}`;
             
             cropImage.onload = function() {
+                const realDimensions = window.extractionMetadata;
+                console.log(`📄 Page PDF chargée pour crop:`);
+                console.log(`   - Dimensions affichées: ${cropImage.naturalWidth}×${cropImage.naturalHeight}`);
+                console.log(`   - Vraies dimensions: ${realDimensions.pageWidth}×${realDimensions.pageHeight}`);
+                
                 // Initialiser l'outil de crop sur la page complète
                 initializeCropTool();
-                showSuccess('Click and drag to select the artwork area on the full page');
+                showSuccess('Click and drag to select the artwork area on the full PDF page');
             };
         }
 
@@ -2025,64 +2111,122 @@
             let startX, startY;
             let cropOverlay = null;
             
-            container.addEventListener('mousedown', function(e) {
-                if (e.target === image) {
-                    isDrawing = true;
-                    const rect = image.getBoundingClientRect();
-                    startX = e.clientX - rect.left;
-                    startY = e.clientY - rect.top;
-                    
-                    // Créer l'overlay de crop
-                    cropOverlay = document.createElement('div');
-                    cropOverlay.className = 'crop-overlay';
-                    cropOverlay.style.left = startX + 'px';
-                    cropOverlay.style.top = startY + 'px';
-                    cropOverlay.style.width = '0px';
-                    cropOverlay.style.height = '0px';
-                    container.appendChild(cropOverlay);
-                }
-            });
-            
-            container.addEventListener('mousemove', function(e) {
-                if (isDrawing && cropOverlay) {
-                    const rect = image.getBoundingClientRect();
-                    const currentX = e.clientX - rect.left;
-                    const currentY = e.clientY - rect.top;
-                    
-                    const width = Math.abs(currentX - startX);
-                    const height = Math.abs(currentY - startY);
-                    const left = Math.min(currentX, startX);
-                    const top = Math.min(currentY, startY);
-                    
-                    cropOverlay.style.left = left + 'px';
-                    cropOverlay.style.top = top + 'px';
-                    cropOverlay.style.width = width + 'px';
-                    cropOverlay.style.height = height + 'px';
-                }
-            });
-            
-            container.addEventListener('mouseup', function(e) {
-                if (isDrawing) {
-                    isDrawing = false;
-                    
-                    // Sauvegarder les données de crop
-                    if (cropOverlay) {
-                        const rect = image.getBoundingClientRect();
-                        cropData = {
-                            x: parseInt(cropOverlay.style.left),
-                            y: parseInt(cropOverlay.style.top),
-                            width: parseInt(cropOverlay.style.width),
-                            height: parseInt(cropOverlay.style.height),
-                            imageWidth: image.naturalWidth,
-                            imageHeight: image.naturalHeight,
-                            displayWidth: rect.width,
-                            displayHeight: rect.height
-                        };
+            // Attendre que l'image soit complètement chargée
+            image.onload = function() {
+                console.log('Image loaded for crop:', image.naturalWidth, 'x', image.naturalHeight);
+                
+                container.addEventListener('mousedown', function(e) {
+                    if (e.target === image) {
+                        isDrawing = true;
+                        const containerRect = container.getBoundingClientRect();
+                        const imageRect = image.getBoundingClientRect();
                         
-                        showSuccess('Crop area selected! Click "Save Changes" to apply.');
+                        // Coordonnées relatives à l'image
+                        startX = e.clientX - imageRect.left;
+                        startY = e.clientY - imageRect.top;
+                        
+                        // Créer l'overlay de crop
+                        cropOverlay = document.createElement('div');
+                        cropOverlay.className = 'crop-overlay';
+                        cropOverlay.style.position = 'absolute';
+                        cropOverlay.style.left = (imageRect.left - containerRect.left + startX) + 'px';
+                        cropOverlay.style.top = (imageRect.top - containerRect.top + startY) + 'px';
+                        cropOverlay.style.width = '0px';
+                        cropOverlay.style.height = '0px';
+                        container.appendChild(cropOverlay);
+                        
+                        e.preventDefault();
                     }
-                }
-            });
+                });
+                
+                container.addEventListener('mousemove', function(e) {
+                    if (isDrawing && cropOverlay) {
+                        const containerRect = container.getBoundingClientRect();
+                        const imageRect = image.getBoundingClientRect();
+                        
+                        const currentX = e.clientX - imageRect.left;
+                        const currentY = e.clientY - imageRect.top;
+                        
+                        const width = Math.abs(currentX - startX);
+                        const height = Math.abs(currentY - startY);
+                        const left = Math.min(currentX, startX);
+                        const top = Math.min(currentY, startY);
+                        
+                        cropOverlay.style.left = (imageRect.left - containerRect.left + left) + 'px';
+                        cropOverlay.style.top = (imageRect.top - containerRect.top + top) + 'px';
+                        cropOverlay.style.width = width + 'px';
+                        cropOverlay.style.height = height + 'px';
+                        
+                        e.preventDefault();
+                    }
+                });
+                
+                container.addEventListener('mouseup', function(e) {
+                    if (isDrawing) {
+                        isDrawing = false;
+                        
+                        // Sauvegarder les données de crop
+                        if (cropOverlay) {
+                            const imageRect = image.getBoundingClientRect();
+                            const cropRect = cropOverlay.getBoundingClientRect();
+                            
+                            // Coordonnées relatives à l'image affichée
+                            const relativeX = cropRect.left - imageRect.left;
+                            const relativeY = cropRect.top - imageRect.top;
+                            const relativeWidth = parseInt(cropOverlay.style.width);
+                            const relativeHeight = parseInt(cropOverlay.style.height);
+                            
+                            // Utiliser les vraies dimensions si disponibles
+                            const realDimensions = window.extractionMetadata;
+                            let finalWidth, finalHeight, realScaleX, realScaleY;
+                            
+                            if (realDimensions && image.src.includes('get-pdf-page')) {
+                                // Crop depuis page PDF : utiliser les vraies dimensions du système d'extraction
+                                finalWidth = realDimensions.pageWidth;
+                                finalHeight = realDimensions.pageHeight;
+                                realScaleX = finalWidth / imageRect.width;
+                                realScaleY = finalHeight / imageRect.height;
+                                
+                                console.log(`🎯 Utilisation des vraies dimensions d'extraction:`);
+                                console.log(`   - Vraies dimensions: ${finalWidth}×${finalHeight}`);
+                                console.log(`   - Facteurs réels: x=${realScaleX.toFixed(3)}, y=${realScaleY.toFixed(3)}`);
+                            } else {
+                                // Fallback sur les dimensions de l'image chargée
+                                finalWidth = image.naturalWidth;
+                                finalHeight = image.naturalHeight;
+                                realScaleX = finalWidth / imageRect.width;
+                                realScaleY = finalHeight / imageRect.height;
+                                
+                                console.log(`📐 Utilisation des dimensions de l'image chargée:`);
+                                console.log(`   - Dimensions image: ${finalWidth}×${finalHeight}`);
+                                console.log(`   - Facteurs: x=${realScaleX.toFixed(3)}, y=${realScaleY.toFixed(3)}`);
+                            }
+                            
+                            cropData = {
+                                x: Math.round(relativeX * realScaleX),
+                                y: Math.round(relativeY * realScaleY),
+                                width: Math.round(relativeWidth * realScaleX),
+                                height: Math.round(relativeHeight * realScaleY),
+                                originalImageWidth: finalWidth,
+                                originalImageHeight: finalHeight,
+                                displayImageWidth: imageRect.width,
+                                displayImageHeight: imageRect.height,
+                                scaleX: realScaleX,
+                                scaleY: realScaleY,
+                                cropSource: image.src.includes('get-pdf-page') ? 'pdf_page' : 'backup_image'
+                            };
+                            
+                            console.log('Crop data saved:', cropData);
+                            showSuccess(`Zone de crop sélectionnée: ${cropData.width}×${cropData.height}px. Cliquez "Save Changes" pour appliquer.`);
+                        }
+                    }
+                });
+            };
+            
+            // Si l'image est déjà chargée
+            if (image.complete) {
+                image.onload();
+            }
         }
 
         function resetCrop() {
